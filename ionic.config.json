@@ -1,0 +1,7 @@
+{
+  "name": "chatapp",
+  "integrations": {
+    "capacitor": {}
+  },
+  "type": "react-vite"
+}
