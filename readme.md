@@ -12,7 +12,7 @@ sudo apt install golang -y
 3. Initialize Go module
 
 ```bash
-go mod init relay
+go mod init socket
 ```
 
 4. Now install the only dependency (Gorilla WebSocket):
