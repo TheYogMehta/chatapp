@@ -28,9 +28,23 @@ export const dbInit = () => {
     await CapacitorSQLite.execute({
       database: DATABASE_NAME,
       statements: `
-        CREATE TABLE IF NOT EXISTS TEST(
+        CREATE TABLE IF NOT EXISTS sessions(
+          sid TEXT PRIMARY KEY,
+          keyJWK TEXT,
+          metadata TEXT
+        );
+        CREATE TABLE IF NOT EXISTS messages(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
-          text TEXT
+          sid TEXT,
+          sender TEXT,
+          text TEXT,
+          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS pending_messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          sid TEXT,
+          payload TEXT,
+          msgID TEXT
         );
       `,
     });

@@ -34,10 +34,52 @@ type Session struct {
 type Server struct {
 	clients  map[string]*Client
 	sessions map[string]*Session
+	notifState map[string]bool 
+    db         *sql.DB
+    privateKey *rsa.PrivateKey
 	mu       sync.Mutex
 }
 
 var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+
+func (s *Server) initDB() {
+    s.db.Exec(`CREATE TABLE IF NOT EXISTS envelopes (
+        sid TEXT PRIMARY KEY,
+        blob TEXT,
+        expires_at DATETIME
+    )`)
+}
+
+
+func (s *Server) handleNudge(envelope string) {
+    tokenBytes, _ := rsa.DecryptOAEP(sha256.New(), nil, s.privateKey, b64decode(envelope), nil)
+    token := string(tokenBytes)
+    tokenHash := fmt.Sprintf("%x", sha256.Sum256(tokenBytes))
+
+    s.mu.Lock()
+    if s.notifState[tokenHash] {
+        s.mu.Unlock()
+        return 
+    }
+    s.notifState[tokenHash] = true
+    s.mu.Unlock()
+
+    sendFCM(token, "New Message", "You have a new notification open app to read context!")
+}
+
+async syncPushToken() {
+    const { value: token } = await PushNotifications.getToken();
+    const envelope = await this.wrapTokenWithRSA(token, serverPubKey);
+    for (const sid in this.sessions) {
+        const doubleEncrypted = await this.encrypt(sid, envelope);
+        this.send({
+            t: "PUSH_SYNC",
+            sid: sid,
+            data: { blob: doubleEncrypted }
+        });
+    }
+    this.send({ t: "PRESENCE_ONLINE", data: { token } });
+}
 
 func (s *Server) newID() string {
 	b := make([]byte, 8)

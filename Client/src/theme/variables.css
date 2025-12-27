@@ -1,2 +1,16 @@
 /* For information on how to create your own theme, please refer to:
 http://ionicframework.com/docs/theming/ */
+ion-content {
+  --offset-top: 0px !important;
+  --offset-bottom: 0px !important;
+  height: 100%;
+}
+
+.ion-page {
+  justify-content: flex-start;
+}
+
+ion-app {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
