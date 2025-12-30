@@ -3,9 +3,7 @@ import { Redirect, Route } from "react-router-dom";
 import { IonApp, IonRouterOutlet, setupIonicReact } from "@ionic/react";
 import { IonReactRouter } from "@ionic/react-router";
 
-setupIonicReact();
-
-// Style
+/* Core CSS required for Ionic components to work properly */
 import "@ionic/react/css/core.css";
 import "@ionic/react/css/normalize.css";
 import "@ionic/react/css/structure.css";
@@ -17,36 +15,54 @@ import "@ionic/react/css/text-transformation.css";
 import "@ionic/react/css/flex-utils.css";
 import "@ionic/react/css/display.css";
 
-const prefersDark = window.matchMedia("(prefers-color-scheme: dark)");
-const toggleDarkMode = (shouldAdd: boolean) => {
-  document.body.classList.toggle("dark", shouldAdd);
-};
-toggleDarkMode(prefersDark.matches);
-prefersDark.addEventListener("change", (e) => toggleDarkMode(e.matches));
-
-// Components
 import LoadingScreen from "./pages/LoadingScreen";
-import { getKeyFromSecureStorage } from "./services/SafeStorage";
-
-// Password Setup
-import Setup from "./pages/Setup/setup";
+import MasterKeySetup from "./pages/Setup/MasterKey";
+import AppLock from "./pages/Setup/AppLock";
 import Home from "./pages/Home/Home";
+
+import { AppLockVerify } from "./services/SafeStorage";
+
+setupIonicReact();
 
 const App: React.FC = () => {
   const [hasMasterKey, setHasMasterKey] = useState<boolean | null>(null);
+  const [hasAppLock, setHasAppLock] = useState<boolean | null>(null);
+  const [isLockEnabled, setIsLockEnabled] = useState<boolean>(false);
+  const [sessionUnlocked, setSessionUnlocked] = useState<boolean>(false);
+
+  const syncSecurityState = async () => {
+    const lockCheck = await AppLockVerify(null);
+    console.log("Check result:", lockCheck);
+
+    if (lockCheck?.needsMasterKey) {
+      setHasAppLock(false);
+      setHasMasterKey(false);
+      setIsLockEnabled(false);
+    } else if (lockCheck.needsPin) {
+      setHasMasterKey(true);
+      setHasAppLock(false);
+    } else if (lockCheck?.success) {
+      setHasAppLock(true);
+      setHasMasterKey(true);
+      setSessionUnlocked(true);
+      setIsLockEnabled(false);
+    } else {
+      setHasAppLock(true);
+      setHasMasterKey(true);
+      setSessionUnlocked(false);
+      setIsLockEnabled(true);
+    }
+  };
 
   useEffect(() => {
-    const checkKey = async () => {
-      const key = await getKeyFromSecureStorage("MASTER_KEY");
-      setHasMasterKey(!!key);
-    };
-    checkKey();
+    syncSecurityState();
   }, []);
 
+  // IMPORTANT: Do not render the Router at all until we know the state
   if (hasMasterKey === null) {
     return (
       <IonApp>
-        <LoadingScreen message="Initializing setup...." />
+        <LoadingScreen message="Checking security status..." />
       </IonApp>
     );
   }
@@ -55,26 +71,57 @@ const App: React.FC = () => {
     <IonApp>
       <IonReactRouter>
         <IonRouterOutlet>
-          {!hasMasterKey ? (
-            <>
-              {/* Setup-only mode */}
-              <Route path="/setup" component={Setup} exact />
-              {/* Anything else redirects to setup */}
-              <Route path="*" render={() => <Redirect to="/setup" />} />
-            </>
-          ) : (
-            <>
-              {/* Normal app mode */}
-              <Route exact path="/home" component={Home} />
-              <Route exact path="/">
-                <Redirect to="/home" />
-              </Route>
-              {/* catch-all */}
-              <Route path="*">
-                <Redirect to="/home" />
-              </Route>
-            </>
-          )}
+          {/* We use conditional logic for the ROOT path based on the fresh state */}
+          <Route exact path="/">
+            {hasMasterKey === false ? (
+              <Redirect to="/setup-masterkey" />
+            ) : hasAppLock === false ? (
+              <Redirect to="/setup-applock" />
+            ) : isLockEnabled && !sessionUnlocked ? (
+              <Redirect to="/unlock" />
+            ) : (
+              <Redirect to="/home" />
+            )}
+          </Route>
+
+          <Route exact path="/setup-masterkey">
+            {hasMasterKey ? (
+              <Redirect to="/setup-applock" />
+            ) : (
+              <MasterKeySetup onComplete={syncSecurityState} />
+            )}
+          </Route>
+
+          <Route exact path="/setup-applock">
+            {!hasMasterKey ? (
+              <Redirect to="/setup-masterkey" />
+            ) : hasAppLock ? (
+              <Redirect to="/unlock" />
+            ) : (
+              <AppLock mode="setup" onSuccess={syncSecurityState} />
+            )}
+          </Route>
+
+          <Route exact path="/unlock">
+            {!hasAppLock ? (
+              <Redirect to="/setup-applock" />
+            ) : !isLockEnabled || sessionUnlocked ? (
+              <Redirect to="/home" />
+            ) : (
+              <AppLock mode="unlock" onSuccess={syncSecurityState} />
+            )}
+          </Route>
+
+          <Route exact path="/home">
+            {/* Double guard inside the route itself */}
+            {hasMasterKey === false ? (
+              <Redirect to="/setup-masterkey" />
+            ) : isLockEnabled && !sessionUnlocked ? (
+              <Redirect to="/unlock" />
+            ) : (
+              <Home />
+            )}
+          </Route>
         </IonRouterOutlet>
       </IonReactRouter>
     </IonApp>
