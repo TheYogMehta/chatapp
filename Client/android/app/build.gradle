@@ -3,6 +3,7 @@ apply plugin: 'com.android.application'
 android {
     namespace "com.chatapp"
     compileSdk rootProject.ext.compileSdkVersion
+
     defaultConfig {
         applicationId "com.chatapp"
         minSdkVersion rootProject.ext.minSdkVersion
@@ -10,30 +11,54 @@ android {
         versionCode 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
         aaptOptions {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
+
+        multiDexEnabled true
+        ndk {
+            // This tells Android to only use these architectures
+            abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
+        }
     }
+
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
-}
 
+    /**
+     * FIX: Support for 16 KB page size devices (Android 15+)
+     * Forces the build tools to align native libraries (.so files)
+     * correctly for modern high-performance Android devices.
+     */
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+}
 
 repositories {
     mavenLocal()
     google()
     mavenCentral()
+    maven { url "https://jitpack.io" }
+
+    // REQUIRED: Official Guardian Project Maven for Tor binaries
+    maven { url "https://raw.githubusercontent.com/guardianproject/gpmaven/master" }
+    maven { url "https://guardianproject.info/maven" }
+
     flatDir {
         dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
     }
-    maven { url "https://raw.githubusercontent.com/guardianproject/gpmaven/master" }
 }
 
 dependencies {
+    // Local JARs
     implementation fileTree(include: ['*.jar'], dir: 'libs')
 
     // Core Capacitor & AndroidX
@@ -43,17 +68,25 @@ dependencies {
     implementation project(':capacitor-android')
     implementation project(':capacitor-cordova-android-plugins')
 
-    // Tor Dependencies - Explicit versions for compatibility
-    implementation 'org.torproject:tor-android-binary:0.4.2.5'
-    implementation 'net.freehaven.tor.control:jtorctl:0.2'
-    implementation 'tangrammer:java-net-http-client:0.1.2'
+    /** * Tor Dependencies - Updated for 2026 Stability
+     * 'org.torproject:tor-android-binary' is deprecated.
+     * Use 'info.guardianproject:tor-android' for modern builds.
+     */
+    implementation 'info.guardianproject:tor-android:0.4.8.21.1'
     implementation 'info.guardianproject:jtorctl:0.4.5.7'
-
 
     // Testing
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+
+    // Add this line to force the inclusion of ListenableFuture
+    implementation 'com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava'
+
+    // Also, ensure you have multidex enabled since you have many libraries
+    implementation 'androidx.multidex:multidex:2.0.1'
+
+    implementation 'com.google.guava:guava:31.1-android'
 }
 
 apply from: 'capacitor.build.gradle'
@@ -67,9 +100,10 @@ try {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
 }
 
-
 configurations.all {
     resolutionStrategy {
         force 'com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava'
+        // Force the verified version of the controller library
+        force 'info.guardianproject:jtorctl:0.4.5.7'
     }
 }
