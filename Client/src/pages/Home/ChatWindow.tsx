@@ -8,6 +8,7 @@ export const ChatWindow = ({ messages, input, setInput, onSend }: any) => {
   const [showMenu, setShowMenu] = useState(false);
   const [showPortModal, setShowPortModal] = useState(false);
   const [port, setPort] = useState("");
+  const [isRecording, setIsRecording] = useState(false);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -27,16 +28,22 @@ export const ChatWindow = ({ messages, input, setInput, onSend }: any) => {
     { label: "Camera", icon: "📷", color: "#ff8906" },
     { label: "Gallery", icon: "🖼️", color: "#e53170" },
     { label: "Audio", icon: "🎧", color: "#2cb67d" },
-    { label: "Live Share", icon: "🌐", color: "#3b82f6" }, // New Live Share Option
+    { label: "Live Share", icon: "🌐", color: "#3b82f6" },
     { label: "Location", icon: "📍", color: "#34d399" },
   ];
 
-  const handleSharePort = () => {
-    if (port) {
-      // Logic to send port info can be added here
-      console.log("Sharing port:", port);
-      setShowPortModal(false);
-      setPort("");
+  const handlePortChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value.replace(/\D/g, "");
+    setPort(value);
+  };
+
+  const handleRecord = () => {
+    setIsRecording(!isRecording);
+    if (!isRecording) {
+      console.log("Started recording...");
+    } else {
+      console.log("Stopped recording and sending...");
+      // Logic for sending audio would go here
     }
   };
 
@@ -61,18 +68,12 @@ export const ChatWindow = ({ messages, input, setInput, onSend }: any) => {
               }}
             >
               <div>{m.text}</div>
-              {m.sender === "me" && (
-                <div style={{ fontSize: "0.65rem", marginTop: "4px", textAlign: "right", color: m.status === 3 ? "#38bdf8" : "#cbd5f5" }}>
-                  {m.status === 1 ? "✓" : m.status === 2 ? "✓✓" : "✓✓"}
-                </div>
-              )}
             </div>
           </div>
         ))}
       </div>
 
       <div style={styles.inputWrapper}>
-        {/* Attachment Grid */}
         {showMenu && (
           <div style={styles.attachmentGrid}>
             {attachments.map((item) => (
@@ -93,53 +94,68 @@ export const ChatWindow = ({ messages, input, setInput, onSend }: any) => {
           </div>
         )}
 
-        {/* Live Share Port Modal */}
         {showPortModal && (
           <div style={styles.portModal}>
             <div style={styles.portModalContent}>
-              <h4 style={{ margin: "0 0 15px 0" }}>Live Share Config</h4>
-              <p style={{ fontSize: "0.8rem", color: "#94a3b8", marginBottom: "15px" }}>Enter the port you want to expose:</p>
+              <h4 style={{ margin: "0 0 10px 0" }}>Live Share Port</h4>
               <input 
-                type="number" 
-                placeholder="e.g. 3000" 
+                type="text" 
+                inputMode="numeric"
+                placeholder="Port (e.g. 8080)" 
                 value={port}
-                onChange={(e) => setPort(e.target.value)}
+                onChange={handlePortChange}
                 style={styles.portInput}
               />
               <div style={{ display: "flex", gap: "10px", marginTop: "15px" }}>
                 <button onClick={() => setShowPortModal(false)} style={styles.portCancelBtn}>Cancel</button>
-                <button onClick={handleSharePort} style={styles.portSendBtn}>Send Invite</button>
+                <button onClick={() => setShowPortModal(false)} style={styles.portSendBtn}>Send</button>
               </div>
             </div>
           </div>
         )}
 
         <div style={styles.inputContainer}>
-          <button 
+          <div 
             onClick={() => setShowMenu(!showMenu)} 
             style={{ 
-              ...styles.plusBtn, 
-              transform: showMenu ? "rotate(45deg)" : "rotate(0deg)",
+              ...styles.plusBtnContainer,
+              transform: showMenu ? "rotate(45deg)" : "rotate(0deg)"
             }}
           >
             ＋
-          </button>
+          </div>
           
           <textarea
             ref={textareaRef}
             rows={1}
-            value={input}
+            value={isRecording ? "Recording..." : input}
+            readOnly={isRecording}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (e.key === "Enter" && !e.shiftKey && input.trim()) {
                 e.preventDefault();
                 onSend();
               }
             }}
             placeholder="Message..."
-            style={styles.inputField}
+            style={{ ...styles.inputField, color: isRecording ? "#ef4444" : "white" }}
           />
-          <button onClick={onSend} style={styles.sendBtn}>🚀</button>
+
+          {/* Conditional Button: Send or Record */}
+          {input.trim().length > 0 ? (
+            <button onClick={onSend} style={styles.sendBtn}>🚀</button>
+          ) : (
+            <button 
+              onClick={handleRecord} 
+              style={{ 
+                ...styles.sendBtn, 
+                backgroundColor: isRecording ? "#ef4444" : "#6366f1",
+                animation: isRecording ? "pulse 1.5s infinite" : "none"
+              }}
+            >
+              🎤
+            </button>
+          )}
         </div>
       </div>
     </div>
