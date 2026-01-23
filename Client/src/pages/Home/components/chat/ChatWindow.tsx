@@ -3,12 +3,29 @@ import { styles } from "../../Home.styles";
 import { MessageBubble } from "./MessageBubble";
 import { PortShareModal } from "./PortShareModal";
 import ChatClient from "../../../../services/ChatClient";
+import {
+  Send,
+  Mic,
+  Plus,
+  Image as ImageIcon,
+  Camera,
+  FileText,
+  MapPin,
+  Headphones,
+  Globe,
+} from "lucide-react";
 
-export const ChatWindow = ({ messages, input, setInput, onSend, activeChat }: any) => {
+export const ChatWindow = ({
+  messages,
+  input,
+  setInput,
+  onSend,
+  activeChat,
+  onFileSelect,
+}: any) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // States from your original file
   const [showMenu, setShowMenu] = useState(false);
   const [showPortModal, setShowPortModal] = useState(false);
   const [port, setPort] = useState("");
@@ -19,7 +36,6 @@ export const ChatWindow = ({ messages, input, setInput, onSend, activeChat }: an
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
-  // Restored Auto-resize logic
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -32,46 +48,104 @@ export const ChatWindow = ({ messages, input, setInput, onSend, activeChat }: an
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0] && activeChat) {
       const file = e.target.files[0];
-      const filePath = URL.createObjectURL(file); // For web/electron to preview. 
-      // Note: Real file path access in Electron usually requires exposing it via electron's IPC if we need the real path for 'fs' access, 
-      // but for sending, we might need to read it as ArrayBuffer or Blob.
-      
-      // Sending logic using ChatClient
-      try {
-        await ChatClient.sendFile(
-             activeChat,
-             filePath, // This might need adjustment depending on ChatClient implementation expecting a URI or Blob
-             { name: file.name, size: file.size, type: file.type }
-        );
-      } catch (err) {
-        console.error("Failed to send file:", err);
+      if (onFileSelect) {
+        onFileSelect(file);
       }
       setShowMenu(false);
     }
   };
 
   const attachments = [
-    { 
-      label: "Document", 
-      icon: "📄", 
-      color: "#7f5af0", 
-      onClick: () => fileInputRef.current?.click() 
+    {
+      label: "Document",
+      icon: <FileText size={24} color="white" />,
+      color: "#7f5af0",
+      onClick: () => fileInputRef.current?.click(),
     },
-    { label: "Camera", icon: "📷", color: "#ff8906" },
-    { label: "Gallery", icon: "🖼️", color: "#e53170", onClick: () => fileInputRef.current?.click() },
-    { label: "Audio", icon: "🎧", color: "#2cb67d" },
+    {
+      label: "Camera",
+      icon: <Camera size={24} color="white" />,
+      color: "#ff8906",
+    },
+    {
+      label: "Gallery",
+      icon: <ImageIcon size={24} color="white" />,
+      color: "#e53170",
+      onClick: () => fileInputRef.current?.click(),
+    },
+    {
+      label: "Audio",
+      icon: <Headphones size={24} color="white" />,
+      color: "#2cb67d",
+    },
     {
       label: "Live Share",
-      icon: "🌐",
+      icon: <Globe size={24} color="white" />,
       color: "#3b82f6",
       onClick: () => setShowPortModal(true),
     },
-    { label: "Location", icon: "📍", color: "#f25f5c" },
+    {
+      label: "Location",
+      icon: <MapPin size={24} color="white" />,
+      color: "#f25f5c",
+    },
   ];
 
-  const handleRecord = () => {
-    setIsRecording(!isRecording);
-    // Logic for recording placeholder
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
+  const handleRecord = async () => {
+    if (!isRecording) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+        });
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = mediaRecorder;
+        audioChunksRef.current = [];
+
+        mediaRecorder.ondataavailable = (event) => {
+          console.log(`[ChatWindow] Audio chunk: ${event.data.size} bytes`);
+          if (event.data.size > 0) {
+            audioChunksRef.current.push(event.data);
+          }
+        };
+
+        mediaRecorder.onstop = () => {
+          const audioBlob = new Blob(audioChunksRef.current, {
+            type: "audio/webm",
+          });
+          console.log(
+            `[ChatWindow] Recording stopped. Total size: ${audioBlob.size} bytes`,
+          );
+          const audioFile = new File(
+            [audioBlob],
+            `voice-note-${Date.now()}.webm`,
+            { type: "audio/webm" },
+          );
+
+          if (onFileSelect) {
+            onFileSelect(audioFile);
+          }
+
+          stream.getTracks().forEach((track) => track.stop());
+        };
+
+        mediaRecorder.start();
+        setIsRecording(true);
+      } catch (err) {
+        console.error("Error accessing microphone:", err);
+        alert("Could not access microphone.");
+      }
+    } else {
+      if (
+        mediaRecorderRef.current &&
+        mediaRecorderRef.current.state !== "inactive"
+      ) {
+        mediaRecorderRef.current.stop();
+        setIsRecording(false);
+      }
+    }
   };
 
   return (
@@ -88,11 +162,21 @@ export const ChatWindow = ({ messages, input, setInput, onSend, activeChat }: an
         ))}
       </div>
 
-      {/* Restored Attachments Menu */}
       {showMenu && (
         <div style={styles.attachmentMenu}>
           {attachments.map((item, i) => (
-            <div key={i} style={styles.menuItem} onClick={item.onClick}>
+            <div
+              key={i}
+              style={styles.menuItem}
+              onClick={item.onClick}
+              onMouseDown={(e) =>
+                (e.currentTarget.style.transform = "scale(0.95)")
+              }
+              onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.transform = "scale(1)")
+              }
+            >
               <div style={{ ...styles.menuIcon, backgroundColor: item.color }}>
                 {item.icon}
               </div>
@@ -108,9 +192,12 @@ export const ChatWindow = ({ messages, input, setInput, onSend, activeChat }: an
           style={{
             ...styles.plusBtnContainer,
             transform: showMenu ? "rotate(45deg)" : "rotate(0deg)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
           }}
         >
-          ＋
+          <Plus size={24} />
         </div>
 
         <textarea
@@ -133,8 +220,16 @@ export const ChatWindow = ({ messages, input, setInput, onSend, activeChat }: an
         />
 
         {input.trim().length > 0 ? (
-          <button onClick={onSend} style={styles.sendBtn}>
-            🚀
+          <button
+            onClick={onSend}
+            style={{
+              ...styles.sendBtn,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Send size={20} />
           </button>
         ) : (
           <button
@@ -143,9 +238,12 @@ export const ChatWindow = ({ messages, input, setInput, onSend, activeChat }: an
               ...styles.sendBtn,
               backgroundColor: isRecording ? "#ef4444" : "#6366f1",
               animation: isRecording ? "pulse 1.5s infinite" : "none",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
             }}
           >
-            🎤
+            <Mic size={20} />
           </button>
         )}
       </div>
@@ -156,7 +254,6 @@ export const ChatWindow = ({ messages, input, setInput, onSend, activeChat }: an
         port={port}
         setPort={setPort}
         onConfirm={(p) => {
-          // This will be linked to actions.startPortShare(p) in useChatLogic
           setShowPortModal(false);
           setShowMenu(false);
         }}

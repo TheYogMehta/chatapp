@@ -22,6 +22,17 @@ const Home = () => {
   return (
     <div style={styles.appContainer}>
       {state.error && <div style={styles.errorToast}>{state.error}</div>}
+      {state.notification && (
+        <div
+          style={{
+            ...styles.errorToast,
+            backgroundColor:
+              state.notification.type === "error" ? "#ef4444" : "#3b82f6",
+          }}
+        >
+          {state.notification.message}
+        </div>
+      )}
 
       <Sidebar
         sessions={state.sessions}
@@ -68,6 +79,7 @@ const Home = () => {
             setInput={actions.setInput}
             onSend={actions.handleSend}
             activeChat={state.activeChat}
+            onFileSelect={actions.handleFile}
           />
         ) : (
           <ConnectionSetup
@@ -75,7 +87,7 @@ const Home = () => {
             isGenerating={state.isGenerating}
             joinCode={state.joinCode}
             setJoinCode={actions.setJoinCode}
-            onConnect={actions.handleJoin} // Adjust to your connection action
+            onConnect={actions.handleJoin}
             setIsGenerating={actions.setIsGenerating}
             isJoining={state.isJoining}
           />

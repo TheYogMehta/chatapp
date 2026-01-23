@@ -133,9 +133,9 @@ async function syncTableSchema(tableName: string, targetColumnsRaw: string) {
   }
 
   const existingNames = currentColumns.map((c: any) => c.name);
-  const targetDefinitions = targetColumnsStr
-    .match(/([^,()]+(\([^()]*\))?)+/g)
-    ?.map((s) => s.trim()) || [];
+  const targetDefinitions =
+    targetColumnsStr.match(/([^,()]+(\([^()]*\))?)+/g)?.map((s) => s.trim()) ||
+    [];
 
   const targetNames = targetDefinitions
     .filter(

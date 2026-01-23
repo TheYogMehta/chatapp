@@ -1,4 +1,3 @@
-import React from "react";
 import { styles } from "../../Home.styles";
 import ChatClient from "../../../../services/ChatClient";
 

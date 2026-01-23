@@ -1,5 +1,4 @@
 import { EventEmitter } from "events";
-import { Platform } from "./SafeStorage";
 
 class SocketManager extends EventEmitter {
   private static instance: SocketManager;
@@ -17,10 +16,8 @@ class SocketManager extends EventEmitter {
     try {
       this.url = url;
 
-
       console.log("Proceeding with WebSocket connection...");
 
-      // 2. Standard WebSocket connection logic
       if (
         this.ws &&
         (this.ws.readyState === WebSocket.OPEN ||
@@ -29,7 +26,6 @@ class SocketManager extends EventEmitter {
         return;
       }
 
-      // Check and Log WebSocket State on Connection Attempt
       await new Promise((resolve, reject) => {
         console.log(`Connecting to: ${url}`);
         this.ws = new WebSocket(url);
@@ -47,7 +43,7 @@ class SocketManager extends EventEmitter {
 
         this.ws.onclose = (event) => {
           console.log(
-            `Socket closed. Code: ${event.code}, Reason: ${event.reason}`
+            `Socket closed. Code: ${event.code}, Reason: ${event.reason}`,
           );
           this.emit("WS_DISCONNECTED");
           setTimeout(() => this.connect(this.url), 3000);
@@ -76,6 +72,10 @@ class SocketManager extends EventEmitter {
       }
       setTimeout(() => this.send(data), 500);
     }
+  }
+
+  public isConnected(): boolean {
+    return !!this.ws && this.ws.readyState === WebSocket.OPEN;
   }
 }
 

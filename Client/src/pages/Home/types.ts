@@ -27,14 +27,21 @@ export interface ChatMessage {
   shared?: {
     port: number;
   };
-  
+
   id?: string;
   thumbnail?: string;
-  mediaStatus?: "pending" | "downloading" | "downloaded" | "error";
+  tempUrl?: string;
+  mediaStatus?:
+    | "pending"
+    | "downloading"
+    | "downloaded"
+    | "error"
+    | "uploading";
   mediaFilename?: string;
   mediaTotalSize?: number;
   mediaCurrentSize?: number;
   mediaProgress?: number;
+  mediaMime?: string;
 }
 
 export interface InboundReq {

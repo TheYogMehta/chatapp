@@ -218,6 +218,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 							T:   "PEER_ONLINE",
 							SID: frame.SID,
 						})
+						s.send(client, Frame{
+							T:   "PEER_ONLINE",
+							SID: frame.SID,
+						})
 					}
 				}
 
@@ -228,28 +232,36 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 					client.id,
 					frame.SID,
 				)
-		// Forward ALL Data in e2e frame packets
 		case "MSG":
 			delivered := false
 			s.mu.Lock()
-			if sess, ok := s.sessions[frame.SID]; ok {
-				sess.mu.Lock()
-				// log.Printf("[Debug] Routing MSG in session %s. Clients: %d", frame.SID, len(sess.clients))
-				for _, c := range sess.clients {
-					if c.id != client.id {
-						if err := s.send(c, frame); err == nil {
-							delivered = true
-							// log.Printf("[Debug] -> Sent to %s", c.id)
-						} else {
-							log.Printf("[Error] Failed to send to %s: %v", c.id, err)
-						}
-					}
+
+			sess, ok := s.sessions[frame.SID]
+			if !ok {
+				sess = &Session{
+					id:      frame.SID,
+					clients: map[string]*Client{client.id: client},
 				}
-				sess.mu.Unlock()
-			} else {
-				log.Printf("[Debug] Session %s not found for MSG", frame.SID)
+				s.sessions[frame.SID] = sess
+				log.Printf("[Server] Auto-created session %s from MSG", frame.SID)
 			}
 			s.mu.Unlock()
+
+			sess.mu.Lock()
+			if _, exists := sess.clients[client.id]; !exists {
+				sess.clients[client.id] = client
+			}
+
+			for _, c := range sess.clients {
+				if c.id != client.id {
+					if err := s.send(c, frame); err == nil {
+						delivered = true
+					} else {
+						log.Printf("[Error] Failed to send to %s: %v", c.id, err)
+					}
+				}
+			}
+			sess.mu.Unlock()
 
 			if delivered {
 				s.send(client, Frame{T: "DELIVERED", SID: frame.SID})

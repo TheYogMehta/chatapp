@@ -18,16 +18,24 @@ export const useChatLogic = () => {
   const [error, setError] = useState<string | null>(null);
   const [peerOnline, setPeerOnline] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [notification, setNotification] = useState<{
+    type: string;
+    message: string;
+  } | null>(null);
   const [activeCall, setActiveCall] = useState<any>(null);
 
   const activeChatRef = useRef<string | null>(null);
   activeChatRef.current = activeChat;
- 
+
   useEffect(() => {
     if (activeChat) {
       loadHistory(activeChat);
+      if (ChatClient.sessions[activeChat]) {
+        setPeerOnline(ChatClient.sessions[activeChat].online);
+      }
     } else {
       setMessages([]);
+      setPeerOnline(false);
     }
   }, [activeChat]);
 
@@ -38,21 +46,30 @@ export const useChatLogic = () => {
               md.filename as mediaFilename, 
               md.file_size as mediaTotalSize, 
               md.size as mediaCurrentSize,
-              md.download_progress as mediaProgress
+              md.download_progress as mediaProgress,
+              md.mime_type as mediaMime,
+              md.thumbnail
        FROM messages m
        LEFT JOIN media md ON m.id = md.message_id
        WHERE m.sid = ? 
        ORDER BY m.timestamp ASC`,
-      [sid]
+      [sid],
     );
     setMessages(rows as any);
   };
 
   useEffect(() => {
     const client = ChatClient;
-    client.init().catch((err) => console.error("Failed to init ChatClient", err));
+    client
+      .init()
+      .catch((err) => console.error("Failed to init ChatClient", err));
 
-    const onSessionUpdate = () => setSessions(Object.keys(client.sessions));
+    const onSessionUpdate = () => {
+      setSessions(Object.keys(client.sessions));
+      if (activeChatRef.current && client.sessions[activeChatRef.current]) {
+        setPeerOnline(client.sessions[activeChatRef.current].online);
+      }
+    };
     const onMsg = (msg: ChatMessage) => {
       if (msg.sid === activeChatRef.current) {
         setMessages((prev) => [...prev, msg]);
@@ -62,20 +79,23 @@ export const useChatLogic = () => {
     const onDownloadProgress = ({ messageId, progress }: any) => {
       setMessages((prev) =>
         prev.map((m) =>
-          (m.id === messageId) ? { ...m, mediaProgress: progress, mediaStatus: "downloading" } : m
-        )
+          m.id === messageId
+            ? { ...m, mediaProgress: progress, mediaStatus: "downloading" }
+            : m,
+        ),
       );
     };
 
     const onFileDownloaded = ({ messageId }: any) => {
       setMessages((prev) =>
         prev.map((m) =>
-          (m.id === messageId) ? { ...m, mediaStatus: "downloaded", mediaProgress: 1 } : m
-        )
+          m.id === messageId
+            ? { ...m, mediaStatus: "downloaded", mediaProgress: 1 }
+            : m,
+        ),
       );
     };
 
-    // Original listeners
     client.on("session_updated", onSessionUpdate);
     client.on("message", onMsg);
     client.on("download_progress", onDownloadProgress);
@@ -103,6 +123,11 @@ export const useChatLogic = () => {
       }
     });
 
+    client.on("notification", (notif) => {
+      setNotification(notif);
+      setTimeout(() => setNotification(null), 3000);
+    });
+
     return () => {
       client.off("session_updated", onSessionUpdate);
       client.off("message", onMsg);
@@ -124,9 +149,46 @@ export const useChatLogic = () => {
         sender: "me",
         timestamp: Date.now(),
         type: "text",
-        status: 1, // Pending
+        status: 1,
       },
     ]);
+  };
+
+  const handleFile = async (file: File) => {
+    if (!activeChat) return;
+
+    const tempId = crypto.randomUUID();
+    const tempMsg: ChatMessage = {
+      id: tempId,
+      sid: activeChat,
+      sender: "me",
+      text: file.name,
+      type: file.type.startsWith("image")
+        ? "image"
+        : file.type.startsWith("video")
+        ? "video"
+        : "file",
+      timestamp: Date.now(),
+      status: 1,
+      mediaStatus: "uploading",
+      mediaProgress: 0,
+      mediaFilename: file.name,
+      mediaTotalSize: file.size,
+      tempUrl: URL.createObjectURL(file),
+    };
+
+    setMessages((prev) => [...prev, tempMsg]);
+
+    ChatClient.sendFile(activeChat, file, {
+      name: file.name,
+      size: file.size,
+      type: file.type,
+    }).catch((err) => {
+      console.error("Failed to send file", err);
+      setMessages((prev) =>
+        prev.map((m) => (m.id === tempId ? { ...m, status: 3 } : m)),
+      );
+    });
   };
 
   const handleJoin = async () => {
@@ -157,6 +219,7 @@ export const useChatLogic = () => {
       error,
       peerOnline,
       isSidebarOpen,
+      notification,
     },
     actions: {
       setView,
@@ -168,6 +231,7 @@ export const useChatLogic = () => {
       setIsWaiting,
       setIsGenerating,
       handleSend,
+      handleFile,
       handleJoin,
       startCall: (type: any) => ChatClient.startCall(activeChat!, type),
       acceptCall: () => ChatClient.acceptCall(activeCall.sid),

@@ -26,7 +26,7 @@ async function getCryptoKey(): Promise<CryptoKey> {
     rawKey,
     { name: "AES-GCM" },
     false,
-    ["encrypt", "decrypt"]
+    ["encrypt", "decrypt"],
   );
   return cachedKey;
 }
@@ -37,7 +37,7 @@ async function encrypt(value: string): Promise<string> {
   const encrypted = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
     key,
-    new TextEncoder().encode(value)
+    new TextEncoder().encode(value),
   );
   const combined = new Uint8Array(iv.length + encrypted.byteLength);
   combined.set(iv);
@@ -52,7 +52,7 @@ async function decrypt(payload: string): Promise<string | null> {
     const decrypted = await crypto.subtle.decrypt(
       { name: "AES-GCM", iv: raw.slice(0, 12) },
       key,
-      raw.slice(12)
+      raw.slice(12),
     );
     return new TextDecoder().decode(decrypted);
   } catch {
@@ -63,7 +63,7 @@ async function decrypt(payload: string): Promise<string | null> {
 export async function setKeyFromSecureStorage(
   key: string,
   value: string,
-  init: boolean = false
+  init: boolean = false,
 ): Promise<void> {
   try {
     const p = await Platform();
@@ -80,7 +80,7 @@ export async function setKeyFromSecureStorage(
 
 export async function getKeyFromSecureStorage(
   key: string,
-  init: boolean = false
+  init: boolean = false,
 ): Promise<string | null> {
   try {
     const p = await Platform();
@@ -93,21 +93,14 @@ export async function getKeyFromSecureStorage(
     }
     return encrypted ? decrypt(encrypted) : null;
   } catch (e: any) {
-    // Suppress error if key doesn't exist (common on first run)
-    if (
-      e?.message?.includes('Item with given key does not exist') ||
-      e?.toString().includes('Item with given key does not exist')
-    ) {
-      return null;
-    }
-    console.error("Error getting key from secure storage:", e);
+    console.error("Error getting key from secure storage:", JSON.stringify(e));
     return null;
   }
 }
 
 export async function AppLock(
   hashPass: string,
-  oldHashpass: string | null
+  oldHashpass: string | null,
 ): Promise<any> {
   const p = await Platform();
   if (hashPass !== null) hashPass = await hashPin(hashPass);
@@ -142,7 +135,7 @@ export async function AppLockVerify(PASS: string | null): Promise<any> {
   const now = Date.now();
 
   const lockoutUntil = Number(
-    (await getKeyFromSecureStorage("LOCKOUT_UNTIL", true)) || 0
+    (await getKeyFromSecureStorage("LOCKOUT_UNTIL", true)) || 0,
   );
   if (now < lockoutUntil && PASS !== null)
     return {
@@ -175,7 +168,7 @@ export async function AppLockVerify(PASS: string | null): Promise<any> {
     return { success: true };
   } else if (PASS !== null) {
     let attempts = Number(
-      (await getKeyFromSecureStorage("FAILED_ATTEMPTS", true)) || 0
+      (await getKeyFromSecureStorage("FAILED_ATTEMPTS", true)) || 0,
     );
     attempts += 1;
     await setKeyFromSecureStorage("FAILED_ATTEMPTS", String(attempts), true);

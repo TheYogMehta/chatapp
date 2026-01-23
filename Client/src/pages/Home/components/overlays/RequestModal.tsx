@@ -1,4 +1,3 @@
-import React from "react";
 import { styles } from "../../Home.styles";
 import ChatClient from "../../../../services/ChatClient";
 
@@ -28,7 +27,7 @@ export const RequestModal = ({
               onClick={async () => {
                 await ChatClient.acceptFriend(
                   inboundReq!.sid,
-                  inboundReq!.publicKey
+                  inboundReq!.publicKey,
                 );
                 setInboundReq(null);
               }}

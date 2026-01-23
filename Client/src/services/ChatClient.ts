@@ -36,8 +36,6 @@ class ChatClient extends EventEmitter {
     await this.loadSessions();
     this.emit("session_updated");
 
-    await socket.connect("ws://162.248.100.69:9000");
-
     socket.on("WS_CONNECTED", () => {
       this.emit("status", true);
       Object.keys(this.sessions).forEach((sid) =>
@@ -46,6 +44,39 @@ class ChatClient extends EventEmitter {
     });
 
     socket.on("message", (frame: ServerFrame) => this.handleFrame(frame));
+
+    await socket.connect("ws://162.248.100.69:9000");
+
+    if (socket.isConnected()) {
+      this.emit("status", true);
+      Object.keys(this.sessions).forEach((sid) =>
+        this.send({ t: "REATTACH", sid }),
+      );
+    }
+  }
+
+  public async syncPendingMessages() {
+    console.log("[Client] Syncing pending messages...");
+    try {
+      const rows = await queryDB(
+        "SELECT * FROM messages WHERE status = 1 AND sender = 'me'",
+      );
+      for (const row of rows) {
+        if (this.sessions[row.sid]) {
+          console.log(`[Client] Resending msg ${row.id} to ${row.sid}`);
+          const payload = await this.encryptForSession(
+            row.sid,
+            JSON.stringify({
+              t: "MSG",
+              data: { text: row.text, id: row.id, timestamp: row.timestamp },
+            }),
+          );
+          this.send({ t: "MSG", sid: row.sid, data: { payload } });
+        }
+      }
+    } catch (e) {
+      console.error("Failed to sync pending messages:", e);
+    }
   }
 
   // --- Actions ---
@@ -91,34 +122,65 @@ class ChatClient extends EventEmitter {
 
   public async sendFile(
     sid: string,
-    fileUri: string,
+    fileData: File | Blob | string,
     fileInfo: { name: string; size: number; type: string },
   ) {
     if (!this.sessions[sid]) throw new Error("Session not found");
 
-    // Persist file for serving
-    const response = await fetch(fileUri);
-    const blob = await response.blob();
-    const base64Data = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-    });
-    const vaultFilename = await StorageService.saveRawFile(base64Data);
+    console.log(`[ChatClient] sendFile: Processing...`);
 
-    const thumbnail = await generateThumbnail(fileUri, fileInfo.type);
-    const messageId = await this.insertMessageRecord(sid, "", "file", "me");
-    
-    // Initialize media entry with the vault filename so we can serve it later
-    // This sets status='downloaded' immediately for the sender
+    let blob: Blob;
+    if (fileData instanceof Blob) {
+      blob = fileData;
+    } else if (typeof fileData === "string") {
+      console.log(`[ChatClient] Fetching URI: ${fileData}`);
+      const response = await fetch(fileData);
+      blob = await response.blob();
+    } else {
+      throw new Error("Invalid file data type");
+    }
+
+    console.log(`[ChatClient] Blob size ${blob.size}, type ${blob.type}`);
+    const base64Data = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const res = reader.result as string;
+        const base64 = res.includes(",") ? res.split(",")[1] : res;
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    console.log(`[ChatClient] Base64 length: ${base64Data.length}`);
+    const vaultFilename = await StorageService.saveRawFile(base64Data);
+    console.log(`[ChatClient] Saved to vault: ${vaultFilename}`);
+
+    const thumbUri =
+      typeof fileData === "string" ? fileData : URL.createObjectURL(fileData);
+    const thumbnail = await generateThumbnail(thumbUri, fileInfo.type);
+    if (typeof fileData !== "string") {
+      URL.revokeObjectURL(thumbUri);
+    }
+    const isImage = fileInfo.type.startsWith("image/");
+    const isVideo = fileInfo.type.startsWith("video/");
+    const isAudio = fileInfo.type.startsWith("audio/");
+
+    const msgType = isImage
+      ? "image"
+      : isVideo
+      ? "video"
+      : isAudio
+      ? "audio"
+      : "file";
+    const messageId = await this.insertMessageRecord(sid, "", msgType, "me");
+
     await StorageService.initMediaEntry(
-        messageId,
-        fileInfo.name,
-        fileInfo.size,
-        fileInfo.type,
-        thumbnail,
-        vaultFilename
+      messageId,
+      fileInfo.name,
+      fileInfo.size,
+      fileInfo.type,
+      thumbnail,
+      vaultFilename,
     );
 
     const encryptedMetadata = await this.encryptForSession(
@@ -144,6 +206,20 @@ class ChatClient extends EventEmitter {
     messageId: string,
     chunkIndex: number = 0,
   ) {
+    if (!this.sessions[sid]?.online) {
+      console.warn(
+        `[Client] Cannot download ${messageId}, user ${sid} is OFFLINE`,
+      );
+      this.emit("notification", {
+        type: "error",
+        message: "User is offline. Download queued.",
+      });
+      return;
+    }
+
+    console.log(
+      `[Client] Sending download request for ${messageId} chunk ${chunkIndex} to ${sid}`,
+    );
     const payload = await this.encryptForSession(
       sid,
       JSON.stringify({
@@ -161,9 +237,11 @@ class ChatClient extends EventEmitter {
         mode === "Audio" ? { audio: true } : { audio: true, video: true },
       );
 
-      if (!this.audioContext || this.audioContext.state === 'closed') {
-         this.audioContext = new AudioContext();
-         await this.audioContext.audioWorklet.addModule("audioWorkletProcessor.js");
+      if (!this.audioContext || this.audioContext.state === "closed") {
+        this.audioContext = new AudioContext();
+        await this.audioContext.audioWorklet.addModule(
+          "audioWorkletProcessor.js",
+        );
       }
 
       const source = this.audioContext.createMediaStreamSource(stream);
@@ -183,7 +261,6 @@ class ChatClient extends EventEmitter {
         this.send({ t: "MSG", sid, data: { payload } });
       };
 
-      // Notify peer of the call
       const invite = await this.encryptForSession(
         sid,
         JSON.stringify({ t: "CALL_INVITE", mode }),
@@ -223,14 +300,12 @@ class ChatClient extends EventEmitter {
       return;
     }
     try {
-      console.log(`[Client] Decrypting frame for ${sid}...`);
       const decryptedBuffer = await this.decryptFromSession(sid, payload);
       if (!decryptedBuffer) {
         console.error(`[Client] Decryption failed for ${sid}`);
         return;
       }
       const { t, data } = JSON.parse(new TextDecoder().decode(decryptedBuffer));
-      console.log(`[Client] Frame Type: ${t}`, data);
 
       switch (t) {
         case "MSG":
@@ -253,14 +328,24 @@ class ChatClient extends EventEmitter {
         case "FILE_INFO":
           const isImage = data.type.startsWith("image/");
           const isVideo = data.type.startsWith("video/");
-          const msgType = isImage ? "image" : isVideo ? "video" : "file";
+          const isAudio = data.type.startsWith("audio/");
+          const msgType = isImage
+            ? "image"
+            : isVideo
+            ? "video"
+            : isAudio
+            ? "audio"
+            : "file";
 
           const localId = await this.insertMessageRecord(
             sid,
             data.name,
             msgType,
             "other",
-            data.messageId
+            data.messageId,
+          );
+          console.log(
+            `[ChatClient] Received FILE_INFO: name=${data.name}, mime=${data.type}, size=${data.size}`,
           );
           await StorageService.initMediaEntry(
             localId,
@@ -276,8 +361,8 @@ class ChatClient extends EventEmitter {
             sender: "other",
             type: msgType,
             thumbnail: data.thumbnail,
-            messageId: localId,
-            mediaStatus: 'pending',
+            id: localId,
+            mediaStatus: "pending",
           });
           break;
         case "FILE_REQ_CHUNK":
@@ -306,26 +391,42 @@ class ChatClient extends EventEmitter {
     messageId: string,
     chunkIndex: number,
   ) {
+    console.log(
+      `[Client] Processing FILE_REQ_CHUNK for ${messageId} index ${chunkIndex}`,
+    );
     const rows = await queryDB(
       "SELECT filename, file_size FROM media WHERE message_id = ?",
       [messageId],
     );
-    if (!rows.length) return;
+    if (!rows.length) {
+      console.error(`[Client] Media record not found for message ${messageId}`);
+      return;
+    }
     const { filename, file_size } = rows[0];
-    const base64Chunk = await StorageService.readChunk(filename, chunkIndex);
-    const payload = await this.encryptForSession(
-      sid,
-      JSON.stringify({
-        t: "FILE_CHUNK",
-        data: {
-          messageId,
-          chunkIndex,
-          payload: base64Chunk,
-          isLast: (chunkIndex + 1) * 64000 >= file_size,
-        },
-      }),
-    );
-    this.send({ t: "MSG", sid, data: { payload } });
+    try {
+      const base64Chunk = await StorageService.readChunk(filename, chunkIndex);
+      if (!base64Chunk) {
+        console.error(`[Client] readChunk returned empty for ${filename}`);
+        return;
+      }
+
+      const payload = await this.encryptForSession(
+        sid,
+        JSON.stringify({
+          t: "FILE_CHUNK",
+          data: {
+            messageId,
+            chunkIndex,
+            payload: base64Chunk,
+            isLast: (chunkIndex + 1) * 64000 >= file_size,
+          },
+        }),
+      );
+      this.send({ t: "MSG", sid, data: { payload } });
+      console.log(`[Client] Sent chunk ${chunkIndex} for ${messageId}`);
+    } catch (e) {
+      console.error(`[Client] Failed to send chunk ${chunkIndex}:`, e);
+    }
   }
 
   private async handleFileChunk(sid: string, data: any) {
@@ -345,6 +446,9 @@ class ChatClient extends EventEmitter {
       "UPDATE media SET download_progress = ?, size = ? WHERE message_id = ?",
       [progress, currentSize, messageId],
     );
+    console.log(
+      `[Client] Received chunk ${chunkIndex} for ${messageId}, progress: ${progress}`,
+    );
 
     if (isLast) {
       await executeDB(
@@ -354,8 +458,8 @@ class ChatClient extends EventEmitter {
       this.emit("file_downloaded", { messageId });
     } else {
       await this.requestDownload(sid, messageId, chunkIndex + 1);
+      this.emit("download_progress", { messageId, progress });
     }
-    this.emit("download_progress", { messageId, progress });
   }
 
   private async insertMessageRecord(
@@ -368,7 +472,7 @@ class ChatClient extends EventEmitter {
     const id = forceId || crypto.randomUUID();
     const timestamp = Date.now();
     await executeDB(
-      "INSERT INTO messages (id, sid, sender, text, type, timestamp, status) VALUES (?, ?, ?, ?, ?, ?, 1)",
+      "INSERT OR IGNORE INTO messages (id, sid, sender, text, type, timestamp, status) VALUES (?, ?, ?, ?, ?, ?, 1)",
       [id, sid, sender, text, type, timestamp],
     );
     return id;
@@ -430,6 +534,7 @@ class ChatClient extends EventEmitter {
         if (this.sessions[sid]) {
           this.sessions[sid].online = true;
           this.emit("session_updated");
+          this.syncPendingMessages();
         }
         break;
       case "PEER_OFFLINE":
@@ -454,7 +559,7 @@ class ChatClient extends EventEmitter {
 
   private async finalizeSession(sid: string, remotePubB64: string) {
     const sharedKey = await this.deriveSharedKey(remotePubB64);
-    this.sessions[sid] = { cryptoKey: sharedKey, online: false };
+    this.sessions[sid] = { cryptoKey: sharedKey, online: true };
     const jwk = await crypto.subtle.exportKey("jwk", sharedKey);
     await executeDB(
       "INSERT OR REPLACE INTO sessions (sid, keyJWK) VALUES (?, ?)",

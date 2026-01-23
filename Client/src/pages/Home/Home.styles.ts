@@ -1,7 +1,7 @@
 import React from "react";
 
 export const styles: { [key: string]: React.CSSProperties } = {
-appContainer: {
+  appContainer: {
     display: "flex",
     height: "100vh",
     backgroundColor: "#020617",
@@ -299,7 +299,7 @@ appContainer: {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    boxShadow: "0 4px 12px rgba(0,0,0,0.3)"
+    boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
   },
   modalButtons: { display: "flex", gap: "12px", marginTop: "24px" },
   cancelBtn: {
@@ -350,7 +350,7 @@ appContainer: {
     justifyContent: "center",
     fontSize: "40px",
     margin: "0 auto",
-    border: "4px solid #6366f1"
+    border: "4px solid #6366f1",
   },
   callStatus: {
     color: "#94a3b8",
@@ -370,15 +370,12 @@ appContainer: {
     cursor: "pointer",
     transition: "transform 0.2s",
   },
-  // ... existing styles ...,
-  // Ensure inputWrapper is relative so the menu positions correctly
   inputWrapper: {
     padding: "12px 16px",
     backgroundColor: "#0b1120",
     borderTop: "1px solid #1e293b",
     position: "relative" as "relative",
   },
-  // ... existing styles ...
   plusBtn: {
     background: "none",
     border: "none",
@@ -411,7 +408,6 @@ appContainer: {
     color: "#cbd5e1",
     fontWeight: 500,
   },
-  // PORT MODAL STYLES
   portModal: {
     position: "absolute",
     bottom: "90px",
@@ -445,21 +441,48 @@ appContainer: {
     borderRadius: "8px",
     cursor: "pointer",
   },
-  attachmentGrid: {
+  attachmentMenu: {
     position: "absolute",
-    bottom: "85px",
-    left: "10px",
-    right: "10px",
+    bottom: "80px",
+    left: "16px",
+    right: "16px",
+    maxWidth: "360px",
     backgroundColor: "#1e293b",
     borderRadius: "24px",
     padding: "24px",
     display: "grid",
     gridTemplateColumns: "repeat(3, 1fr)",
-    gap: "24px",
-    boxShadow: "0 -15px 40px rgba(0,0,0,0.5)",
-    zIndex: 1000,
+    gap: "24px 16px",
+    boxShadow: "0 -10px 40px rgba(0,0,0,0.5)",
+    zIndex: 100,
+    animation: "slideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
+    border: "1px solid #334155",
   },
-  // Add/Update these in your Home.styles.ts
+  menuItem: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "8px",
+    cursor: "pointer",
+    transition: "transform 0.1s",
+  },
+  menuIcon: {
+    width: "56px",
+    height: "56px",
+    borderRadius: "20px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "24px",
+    color: "white",
+    boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+  },
+  menuLabel: {
+    fontSize: "0.75rem",
+    color: "#cbd5e1",
+    fontWeight: 500,
+    textAlign: "center",
+  },
   plusBtnContainer: {
     width: "40px",
     height: "40px",
@@ -471,7 +494,7 @@ appContainer: {
     cursor: "pointer",
     transition: "0.2s ease",
     userSelect: "none",
-    flexShrink: 0, // Prevents the icon from squishing
+    flexShrink: 0,
   },
   inputContainer: {
     display: "flex",
@@ -511,7 +534,7 @@ appContainer: {
     paddingRight: "max(16px, env(safe-area-inset-right))",
     backgroundColor: "#020617",
     position: "relative" as "relative",
-    overflow: "hidden", 
+    overflow: "hidden",
   },
   messageList: {
     flex: 1,
@@ -545,6 +568,6 @@ appContainer: {
     color: "white",
     fontSize: "1rem",
     outline: "none",
-    appearance: "none", // Removes arrows in some browsers
+    appearance: "none",
   },
 };
