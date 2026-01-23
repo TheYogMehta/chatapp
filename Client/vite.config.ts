@@ -12,9 +12,5 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: "./src/setupTests.ts",
   },
-  build: {
-    rollupOptions: {
-      external: ["@start9labs/capacitor-tor"],
-    },
-  },
+  build: {},
 });

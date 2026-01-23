@@ -3,23 +3,76 @@ import { getKeyFromSecureStorage } from "./SafeStorage";
 
 let dbReady: Promise<void> | null = null;
 const DATABASE_NAME = "chatapp";
+
 const SCHEMA = {
+  me: {
+    columns: `
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      public_name TEXT,
+      public_avatar TEXT,
+      name_version INTEGER DEFAULT 1,
+      avatar_version INTEGER DEFAULT 1
+    `,
+    indices: [],
+  },
   sessions: {
-    columns: "sid TEXT PRIMARY KEY UNIQUE, keyJWK TEXT, status TEXT",
+    columns: `
+      sid TEXT PRIMARY KEY UNIQUE, 
+      keyJWK TEXT,
+      alias_name TEXT,
+      alias_avatar TEXT,
+      peer_name TEXT,
+      peer_avatar TEXT,
+      peer_name_ver INTEGER DEFAULT 0,
+      peer_avatar_ver INTEGER DEFAULT 0
+    `,
     indices: [],
   },
   messages: {
     columns: `
-      id INTEGER PRIMARY KEY AUTOINCREMENT, 
+      id TEXT PRIMARY KEY,
       sid TEXT, 
       sender TEXT, 
-      text TEXT, 
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+      text TEXT,
+      type TEXT DEFAULT 'text',
+      timestamp INTEGER,
+      status INTEGER DEFAULT 1,
+      _ver INTEGER DEFAULT 2,
       FOREIGN KEY(sid) REFERENCES sessions(sid) ON DELETE CASCADE
     `,
-    indices: ["CREATE INDEX IF NOT EXISTS idx_messages_sid ON messages(sid);"],
+    indices: ["CREATE INDEX IF NOT EXISTS idx_msg_sid ON messages(sid);"],
+  },
+  media: {
+    columns: `
+      filename TEXT PRIMARY KEY,
+      original_name TEXT,
+      file_size INTEGER,
+      mime_type TEXT,
+      message_id TEXT,
+      download_progress REAL DEFAULT 0,
+      size INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'pending',
+      thumbnail TEXT,
+      FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
+    `,
+    indices: ["CREATE INDEX IF NOT EXISTS idx_media_msg ON media(message_id);"],
+  },
+  live_shares: {
+    columns: `
+      sid TEXT,
+      port INTEGER,
+      direction TEXT,
+      message_id INTEGER,
+      PRIMARY KEY (sid, port, direction),
+      FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
+    `,
+    indices: [
+      "CREATE INDEX IF NOT EXISTS idx_shares_msg ON live_shares(message_id);",
+    ],
   },
 };
+
+const tableOrder = ["me", "sessions", "messages", "media", "live_shares"];
 
 export const dbInit = () => {
   if (dbReady) return dbReady;
@@ -46,7 +99,8 @@ export const dbInit = () => {
       statements: "PRAGMA foreign_keys = ON;",
     });
 
-    for (const [tableName, tableDef] of Object.entries(SCHEMA)) {
+    for (const tableName of tableOrder) {
+      const tableDef = SCHEMA[tableName as keyof typeof SCHEMA];
       await syncTableSchema(tableName, tableDef.columns);
 
       if (tableDef.indices.length > 0) {
@@ -60,25 +114,11 @@ export const dbInit = () => {
   return dbReady;
 };
 
-export const queryDB = async (sql: string, values: any[] = []) => {
-  await dbInit();
-  const res = await CapacitorSQLite.query({
-    database: DATABASE_NAME,
-    statement: sql,
-    values,
-  });
-  return res?.values ?? [];
-};
-
-export const executeDB = async (sql: string, values: any[] = []) => {
-  await dbInit();
-  await CapacitorSQLite.execute({ database: DATABASE_NAME, statements: sql });
-};
-
 async function syncTableSchema(tableName: string, targetColumnsRaw: string) {
   const info = await CapacitorSQLite.query({
     database: DATABASE_NAME,
     statement: `PRAGMA table_info(${tableName});`,
+    values: [],
   });
 
   const currentColumns = info?.values || [];
@@ -93,21 +133,24 @@ async function syncTableSchema(tableName: string, targetColumnsRaw: string) {
   }
 
   const existingNames = currentColumns.map((c: any) => c.name);
-  const targetDefinitions = targetColumnsStr.split(",").map((c) => c.trim());
+  const targetDefinitions = targetColumnsStr
+    .match(/([^,()]+(\([^()]*\))?)+/g)
+    ?.map((s) => s.trim()) || [];
 
   const targetNames = targetDefinitions
     .filter(
       (d) =>
         !d.toUpperCase().startsWith("FOREIGN KEY") &&
-        !d.toUpperCase().startsWith("CONSTRAINT")
+        !d.toUpperCase().startsWith("CONSTRAINT") &&
+        !d.toUpperCase().startsWith("PRIMARY KEY"),
     )
     .map((d) => d.split(" ")[0]);
 
   const addedColumns = targetNames.filter(
-    (name) => !existingNames.includes(name)
+    (name) => !existingNames.includes(name),
   );
   const removedColumns = existingNames.filter(
-    (name) => !targetNames.includes(name)
+    (name) => !targetNames.includes(name),
   );
 
   if (addedColumns.length > 0 && removedColumns.length === 0) {
@@ -147,3 +190,22 @@ async function syncTableSchema(tableName: string, targetColumnsRaw: string) {
     });
   }
 }
+
+export const queryDB = async (sql: string, values: any[] = []) => {
+  await dbInit();
+  const res = await CapacitorSQLite.query({
+    database: DATABASE_NAME,
+    statement: sql,
+    values: values,
+  });
+  return res?.values ?? [];
+};
+
+export const executeDB = async (sql: string, values: any[] = []) => {
+  await dbInit();
+  await CapacitorSQLite.run({
+    database: DATABASE_NAME,
+    statement: sql,
+    values: values,
+  });
+};

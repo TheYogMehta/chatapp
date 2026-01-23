@@ -56,13 +56,6 @@ dependencies {
     implementation project(':capacitor-android')
     implementation project(':capacitor-cordova-android-plugins')
 
-    // -------------------------------------------------------
-    // TOR ENGINE (The Briar Way - using JitPack mirrors)
-    // -------------------------------------------------------
-    implementation 'com.github.guardianproject:tor-android:0.4.8.21.1'
-    implementation 'com.github.guardianproject.tor-android:tor-android-binary:0.4.8.12'
-    implementation 'com.github.guardianproject:jtorctl:0.4.5.7'
-
     // Firebase
     implementation platform("com.google.firebase:firebase-bom:33.5.1")
     implementation "com.google.firebase:firebase-messaging"

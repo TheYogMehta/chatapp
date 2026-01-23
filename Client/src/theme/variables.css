@@ -1,5 +1,21 @@
 /* For information on how to create your own theme, please refer to:
 http://ionicframework.com/docs/theming/ */
+
+:root {
+  --ion-background-color: #313338;
+  --ion-item-background: #2b2d31;
+  --ion-toolbar-background: #1e1f22;
+  --ion-text-color: #f2f3f5;
+  --ion-color-primary: #5865f2;
+  --ion-color-primary-rgb: 88, 101, 242;
+}
+
+@import "@ionic/react/css/palettes/dark.always.css";
+
+body {
+  background-color: var(--ion-background-color);
+}
+
 ion-content {
   --offset-top: 0px !important;
   --offset-bottom: 0px !important;

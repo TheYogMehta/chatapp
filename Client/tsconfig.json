@@ -17,9 +17,7 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "baseUrl": ".",
-    "paths": {
-      "@start9labs/capacitor-tor": ["./src/types/tor.d.ts"]
-    }
+    "paths": {}
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.d.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]

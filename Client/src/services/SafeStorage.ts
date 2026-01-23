@@ -92,7 +92,14 @@ export async function getKeyFromSecureStorage(
       encrypted = await (window as any).SafeStorage.getKey(key);
     }
     return encrypted ? decrypt(encrypted) : null;
-  } catch (e) {
+  } catch (e: any) {
+    // Suppress error if key doesn't exist (common on first run)
+    if (
+      e?.message?.includes('Item with given key does not exist') ||
+      e?.toString().includes('Item with given key does not exist')
+    ) {
+      return null;
+    }
     console.error("Error getting key from secure storage:", e);
     return null;
   }
@@ -168,7 +175,7 @@ export async function AppLockVerify(PASS: string | null): Promise<any> {
     return { success: true };
   } else if (PASS !== null) {
     let attempts = Number(
-      (await getKeyFromSecureStorage("FAILED_ATTEMPTS"), true) || 0
+      (await getKeyFromSecureStorage("FAILED_ATTEMPTS", true)) || 0
     );
     attempts += 1;
     await setKeyFromSecureStorage("FAILED_ATTEMPTS", String(attempts), true);

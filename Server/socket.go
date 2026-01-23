@@ -48,12 +48,12 @@ func (s *Server) newID() string {
 	return fmt.Sprintf("%d_%s", time.Now().UnixMilli(), hex.EncodeToString(b))
 }
 
-func (s *Server) send(c *Client, f Frame) {
-	if c == nil { return }
+func (s *Server) send(c *Client, f Frame) error {
+	if c == nil { return nil }
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	_ = c.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-	_ = c.conn.WriteJSON(f)
+	return c.conn.WriteJSON(f)
 }
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
@@ -111,9 +111,6 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		if err := ws.ReadJSON(&frame); err != nil { break }
 
 		switch frame.T {
-		// Heartbeat
-		case "PONG":
-			break;
 		// Genrate a invite code
 		case "CREATE_SESSION":
 			sid := s.newID()
@@ -210,6 +207,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 					}
 					s.sessions[frame.SID] = sess
 				}
+				s.mu.Unlock()
 
 				sess.mu.Lock()
 				sess.clients[client.id] = client
@@ -236,15 +234,20 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			s.mu.Lock()
 			if sess, ok := s.sessions[frame.SID]; ok {
 				sess.mu.Lock()
+				// log.Printf("[Debug] Routing MSG in session %s. Clients: %d", frame.SID, len(sess.clients))
 				for _, c := range sess.clients {
 					if c.id != client.id {
-						if s.send(c, frame) == nil {
+						if err := s.send(c, frame); err == nil {
 							delivered = true
+							// log.Printf("[Debug] -> Sent to %s", c.id)
+						} else {
+							log.Printf("[Error] Failed to send to %s: %v", c.id, err)
 						}
-						break
 					}
 				}
 				sess.mu.Unlock()
+			} else {
+				log.Printf("[Debug] Session %s not found for MSG", frame.SID)
 			}
 			s.mu.Unlock()
 

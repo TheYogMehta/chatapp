@@ -1,8 +1,40 @@
 export interface ChatMessage {
   sid: string;
-  text: string;
   sender: "me" | "other";
   status?: 1 | 2 | 3;
+  timestamp: number;
+
+  type:
+    | "text"
+    | "image"
+    | "gif"
+    | "audio"
+    | "file"
+    | "video"
+    | "sticker"
+    | "live share port";
+
+  text?: string;
+
+  media?: {
+    url: string;
+    mime: string;
+    size: number;
+    name?: string;
+    duration?: number;
+  };
+
+  shared?: {
+    port: number;
+  };
+  
+  id?: string;
+  thumbnail?: string;
+  mediaStatus?: "pending" | "downloading" | "downloaded" | "error";
+  mediaFilename?: string;
+  mediaTotalSize?: number;
+  mediaCurrentSize?: number;
+  mediaProgress?: number;
 }
 
 export interface InboundReq {

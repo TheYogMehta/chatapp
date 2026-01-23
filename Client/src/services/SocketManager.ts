@@ -5,7 +5,6 @@ class SocketManager extends EventEmitter {
   private static instance: SocketManager;
   private ws: WebSocket | null = null;
   private url: string = "";
-  private isTorRunning: boolean = false;
 
   static getInstance() {
     if (!SocketManager.instance) {
@@ -18,20 +17,6 @@ class SocketManager extends EventEmitter {
     try {
       this.url = url;
 
-      // 1. Check if it's an onion link
-      const isOnion = url.toLowerCase().includes(".onion");
-
-      if (isOnion && !this.isTorRunning) {
-        console.log("Onion address detected. Initializing Tor...");
-        try {
-          await this.initTor();
-          this.isTorRunning = true;
-        } catch (err) {
-          console.error("Failed to start Tor for onion address:", err);
-          this.emit("error", "Tor Initialization Failed");
-          return;
-        }
-      }
 
       console.log("Proceeding with WebSocket connection...");
 
@@ -46,7 +31,7 @@ class SocketManager extends EventEmitter {
 
       // Check and Log WebSocket State on Connection Attempt
       await new Promise((resolve, reject) => {
-        console.log(`Connecting to: ${url} (Tor: ${isOnion})`);
+        console.log(`Connecting to: ${url}`);
         this.ws = new WebSocket(url);
 
         this.ws.onopen = () => {
@@ -75,44 +60,9 @@ class SocketManager extends EventEmitter {
         };
       });
     } catch (err) {
-      console.error("Failed to start Tor for onion address:", err);
-      this.emit("error", "Tor Initialization Failed");
+      console.error("Failed to connect to WebSocket:", err);
+      this.emit("error", "WebSocket Connection Failed");
       return;
-    }
-  }
-
-  private async initTor() {
-    const platform = await Platform();
-    if (platform === "ios" || platform === "android") {
-      try {
-        const { Tor } = await import("@start9labs/capacitor-tor");
-        await Tor.start();
-        console.log("Tor started on native");
-      } catch (e) {
-        throw new Error("Capacitor Tor failed: " + e);
-      }
-    } else {
-      return new Promise((resolve, reject) => {
-        const timeout = setTimeout(
-          () => reject("Tor bootstrap timed out"),
-          60000
-        );
-
-        if ((window as any).TorManager?.onLog) {
-          (window as any).TorManager.onLog((log: string) => {
-            if (log.includes("Bootstrapped 100%")) {
-              clearTimeout(timeout);
-              console.log("Tor Ready for sockets!");
-              resolve(true);
-            }
-          });
-        }
-
-        (window as any).TorManager.initTor().catch((err: any) => {
-          clearTimeout(timeout);
-          reject(err);
-        });
-      });
     }
   }
 
@@ -121,6 +71,9 @@ class SocketManager extends EventEmitter {
       this.ws.send(JSON.stringify(data));
     } else {
       console.warn("WebSocket not connected. Retrying...");
+      if (this.url && (!this.ws || this.ws.readyState === WebSocket.CLOSED)) {
+        this.connect(this.url).catch(console.error);
+      }
       setTimeout(() => this.send(data), 500);
     }
   }

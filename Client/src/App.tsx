@@ -58,7 +58,7 @@ const App: React.FC = () => {
     syncSecurityState();
   }, []);
 
-  // IMPORTANT: Do not render the Router at all until we know the state
+  // loading state
   if (hasMasterKey === null) {
     return (
       <IonApp>
@@ -71,7 +71,6 @@ const App: React.FC = () => {
     <IonApp>
       <IonReactRouter>
         <IonRouterOutlet>
-          {/* We use conditional logic for the ROOT path based on the fresh state */}
           <Route exact path="/">
             {hasMasterKey === false ? (
               <Redirect to="/setup-masterkey" />
@@ -113,7 +112,6 @@ const App: React.FC = () => {
           </Route>
 
           <Route exact path="/home">
-            {/* Double guard inside the route itself */}
             {hasMasterKey === false ? (
               <Redirect to="/setup-masterkey" />
             ) : isLockEnabled && !sessionUnlocked ? (
