@@ -5,7 +5,33 @@ import { ChatWindow } from "./components/chat/ChatWindow";
 import { ConnectionSetup } from "./components/overlays/ConnectionSetup";
 import { RequestModal } from "./components/overlays/RequestModal";
 import { CallOverlay } from "./components/overlays/CallOverlay";
+import LoadingScreen from "../LoadingScreen";
+import { Login } from "../Login";
 import { styles } from "./Home.styles";
+
+class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: any}> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("ErrorBoundary caught error:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{padding: 20, color: 'red'}}>
+          <h2>Something went wrong.</h2>
+          <pre>{this.state.error?.toString()}</pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const Home = () => {
   const { state, actions } = useChatLogic();
@@ -14,12 +40,28 @@ const Home = () => {
   );
 
   useEffect(() => {
+    console.log("[Home] Render state:", { userEmail: state.userEmail, view: state.view });
+  }, [state.userEmail, state.view]);
+
+  useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
+  if (state.isLoading) {
+    return <LoadingScreen message="Checking authentication..." />;
+  }
+
+  if (!state.userEmail) {
+    console.log("[Home] Rendering Login");
+    return <Login onLogin={actions.login} />;
+  }
+
+  console.log("[Home] Rendering Main UI");
+
   return (
+    <ErrorBoundary>
     <div style={styles.appContainer}>
       {state.error && <div style={styles.errorToast}>{state.error}</div>}
       {state.notification && (
@@ -80,15 +122,14 @@ const Home = () => {
             onSend={actions.handleSend}
             activeChat={state.activeChat}
             onFileSelect={actions.handleFile}
+            peerOnline={state.peerOnline}
+            onStartCall={(mode: any) => actions.startCall(mode)}
           />
         ) : (
           <ConnectionSetup
-            inviteCode={state.inviteCode}
-            isGenerating={state.isGenerating}
-            joinCode={state.joinCode}
-            setJoinCode={actions.setJoinCode}
-            onConnect={actions.handleJoin}
-            setIsGenerating={actions.setIsGenerating}
+            targetEmail={state.targetEmail}
+            setTargetEmail={actions.setTargetEmail}
+            onConnect={actions.handleConnect}
             isJoining={state.isJoining}
           />
         )}
@@ -110,6 +151,7 @@ const Home = () => {
         />
       )}
     </div>
+    </ErrorBoundary>
   );
 };
 

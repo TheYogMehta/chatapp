@@ -16,9 +16,11 @@ import {
   session,
 } from "electron";
 import electronIsDev from "electron-is-dev";
-import electronServe from "electron-serve";
 import windowStateKeeper from "electron-window-state";
 import { join } from "path";
+import { createServer } from "http";
+import handler from "serve-handler";
+
 
 // Define components for a watcher to detect when the webapp is changed so we can reload in Dev mode.
 const reloadWatcher = {
@@ -89,15 +91,28 @@ export class ElectronCapacitorApp {
     }
 
     // Setup our web app loader, this lets us load apps like react, vue, and angular without changing their build chains.
-    this.loadWebApp = electronServe({
-      directory: join(app.getAppPath(), "app"),
-      scheme: this.customScheme,
-    });
+    // this.loadWebApp = electronServe({
+    //   directory: join(app.getAppPath(), "app"),
+    //   scheme: this.customScheme,
+    // });
   }
 
   // Helper function to load in the app.
   private async loadMainWindow(thisRef: any) {
-    await thisRef.loadWebApp(thisRef.MainWindow);
+    // await thisRef.loadWebApp(thisRef.MainWindow);
+    const server = createServer((request, response) => {
+      return handler(request, response, {
+        public: join(app.getAppPath(), "app"),
+        rewrites: [
+          { source: "**", destination: "/index.html" }
+        ]
+      });
+    });
+    
+    server.listen(5173, () => {
+      console.log('Running at http://localhost:5173');
+      thisRef.MainWindow.loadURL('http://localhost:5173');
+    });
   }
 
   // Expose the mainWindow ref for use outside of the class.
@@ -209,14 +224,14 @@ export class ElectronCapacitorApp {
 
     // Security
     this.MainWindow.webContents.setWindowOpenHandler((details) => {
-      if (!details.url.includes(this.customScheme)) {
+      if (!details.url.includes(this.customScheme) && !details.url.includes('localhost')) {
         return { action: "deny" };
       } else {
         return { action: "allow" };
       }
     });
     this.MainWindow.webContents.on("will-navigate", (event, _newURL) => {
-      if (!this.MainWindow.webContents.getURL().includes(this.customScheme)) {
+      if (!this.MainWindow.webContents.getURL().includes(this.customScheme) && !this.MainWindow.webContents.getURL().includes('localhost')) {
         event.preventDefault();
       }
     });

@@ -9,10 +9,12 @@ export const useChatLogic = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessions, setSessions] = useState<string[]>([]);
   const [input, setInput] = useState("");
-  const [inviteCode, setInviteCode] = useState<string | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
+  // const [inviteCode, setInviteCode] = useState<string | null>(null); // Removed
+  // const [isGenerating, setIsGenerating] = useState(false); // Removed
   const [isJoining, setIsJoining] = useState(false);
-  const [joinCode, setJoinCode] = useState("");
+  const [targetEmail, setTargetEmail] = useState("");
+  // const [joinCode, setJoinCode] = useState(""); // Removed in favor of targetEmail
+
   const [isWaiting, setIsWaiting] = useState(false);
   const [inboundReq, setInboundReq] = useState<InboundReq | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -23,6 +25,8 @@ export const useChatLogic = () => {
     message: string;
   } | null>(null);
   const [activeCall, setActiveCall] = useState<any>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   const activeChatRef = useRef<string | null>(null);
   activeChatRef.current = activeChat;
@@ -62,7 +66,19 @@ export const useChatLogic = () => {
     const client = ChatClient;
     client
       .init()
-      .catch((err) => console.error("Failed to init ChatClient", err));
+      .then(() => {
+        if (!client.hasToken()) {
+          setIsLoading(false);
+        } else {
+          setTimeout(() => {
+            if (!client.userEmail) setIsLoading(false);
+          }, 5000);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to init ChatClient", err);
+        setIsLoading(false);
+      });
 
     const onSessionUpdate = () => {
       setSessions(Object.keys(client.sessions));
@@ -100,10 +116,7 @@ export const useChatLogic = () => {
     client.on("message", onMsg);
     client.on("download_progress", onDownloadProgress);
     client.on("file_downloaded", onFileDownloaded);
-    client.on("invite_ready", (code) => {
-      setInviteCode(code);
-      setIsGenerating(false);
-    });
+    // client.on("invite_ready", ...); // Removed
     client.on("waiting_for_accept", () => {
       setIsJoining(false);
       setIsWaiting(true);
@@ -111,9 +124,16 @@ export const useChatLogic = () => {
     client.on("joined_success", (sid) => {
       setIsWaiting(false);
       setIsJoining(false);
-      setInviteCode(null);
     });
     client.on("inbound_request", (req) => setInboundReq(req));
+    client.on("auth_success", (email) => {
+      setUserEmail(email);
+      setIsLoading(false);
+    });
+    client.on("auth_error", () => {
+      setUserEmail(null);
+      setIsLoading(false);
+    });
     client.on("call_incoming", (call) =>
       setActiveCall({ ...call, status: "ringing" }),
     );
@@ -131,8 +151,8 @@ export const useChatLogic = () => {
     return () => {
       client.off("session_updated", onSessionUpdate);
       client.off("message", onMsg);
-      client.off("download_progress", onDownloadProgress);
       client.off("file_downloaded", onFileDownloaded);
+      client.off("auth_success", () => {});
     };
   }, []);
 
@@ -191,52 +211,56 @@ export const useChatLogic = () => {
     });
   };
 
-  const handleJoin = async () => {
-    if (!joinCode) return;
+  const handleConnect = async () => {
+    if (!targetEmail) return;
     setIsJoining(true);
     try {
-      await ChatClient.joinByCode(joinCode);
-    } catch (e) {
-      console.error(e);
-      setIsJoining(false);
+        await ChatClient.connectToPeer(targetEmail);
+        setIsJoining(false); // Request sent
+        setNotification({ type: 'success', message: 'Connection request sent' });
+        setTargetEmail(""); 
+    } catch(e) {
+        console.error(e);
+        setIsJoining(false);
+        setNotification({ type: 'error', message: 'Failed to send request' });
     }
-  };
+  }
 
   return {
     state: {
-      view,
-      activeChat,
-      activeCall,
-      messages,
-      sessions,
-      input,
-      inviteCode,
-      isGenerating,
-      isJoining,
-      joinCode,
-      isWaiting,
-      inboundReq,
-      error,
-      peerOnline,
-      isSidebarOpen,
-      notification,
+       view,
+       activeChat,
+       activeCall,
+       messages,
+       sessions,
+       input,
+       isJoining,
+       targetEmail,
+       isWaiting,
+       inboundReq,
+       error,
+       peerOnline,
+       isSidebarOpen,
+       notification,
+       userEmail,
+       isLoading
     },
     actions: {
-      setView,
-      setActiveChat,
-      setInput,
-      setJoinCode,
-      setIsSidebarOpen,
-      setInboundReq,
-      setIsWaiting,
-      setIsGenerating,
-      handleSend,
-      handleFile,
-      handleJoin,
-      startCall: (type: any) => ChatClient.startCall(activeChat!, type),
-      acceptCall: () => ChatClient.acceptCall(activeCall.sid),
-      rejectCall: () => ChatClient.endCall(activeCall.sid),
-      endCall: () => ChatClient.endCall(activeCall.sid),
-    },
+       login: (token: string) => ChatClient.login(token),
+       setView,
+       setActiveChat,
+       setInput,
+       setTargetEmail,
+       setIsSidebarOpen,
+       setInboundReq,
+       setIsWaiting,
+       handleSend,
+       handleFile,
+       handleConnect,
+       startCall: (type: any) => ChatClient.startCall(activeChat!, type),
+       acceptCall: () => ChatClient.acceptCall(activeCall.sid),
+       rejectCall: () => ChatClient.endCall(activeCall.sid),
+       endCall: () => ChatClient.endCall(activeCall.sid),
+    }
   };
 };

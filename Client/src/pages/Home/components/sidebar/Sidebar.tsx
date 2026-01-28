@@ -52,7 +52,7 @@ export const Sidebar = ({
 
       <div style={styles.sidebarFooter}>
         <button onClick={onAddPeer} style={styles.addBtn}>
-          <span>+</span> Add New Peer
+          <span>+</span> Connect via Email
         </button>
       </div>
     </nav>

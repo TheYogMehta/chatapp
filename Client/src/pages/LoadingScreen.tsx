@@ -1,6 +1,8 @@
 import React from "react";
 import { IonContent, IonPage, IonSpinner } from "@ionic/react";
 
+import { colors } from "../theme/colors";
+
 interface LoadingScreenProps {
   title?: string;
   message?: string;
@@ -20,11 +22,12 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({
           flexDirection: "column",
           justifyContent: "center",
           alignItems: "center",
+          "--background": colors.background,
         }}
       >
-        <h1>{title}</h1>
-        <IonSpinner name="crescent" style={{ marginTop: 20 }} />
-        <p style={{ marginTop: 12, opacity: 0.7 }}>{message}</p>
+        <h1 className="title-large" style={{ marginBottom: "1rem" }}>{title}</h1>
+        <IonSpinner name="crescent" color="primary" style={{ marginTop: 20 }} />
+        <p style={{ marginTop: 12, color: colors.text.secondary }}>{message}</p>
       </IonContent>
     </IonPage>
   );

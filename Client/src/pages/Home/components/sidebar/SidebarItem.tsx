@@ -13,7 +13,9 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
   isActive,
   onSelect,
 }) => {
-  const isOnline = ChatClient.sessions[sid]?.online;
+  const session = ChatClient.sessions[sid];
+  const isOnline = session?.online;
+  const displayName = session?.peerEmail || `Peer ${sid.slice(0, 6)}`;
 
   return (
     <div
@@ -29,10 +31,10 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
           borderColor: isOnline ? "#22c55e" : "#334155",
         }}
       >
-        {sid[0].toUpperCase()}
+        {displayName[0].toUpperCase()}
       </div>
       <div style={styles.sessionInfo}>
-        <div style={styles.sessionName}>Peer {sid.slice(0, 6)}</div>
+        <div style={styles.sessionName}>{displayName}</div>
         <div
           style={{
             fontSize: "0.7rem",

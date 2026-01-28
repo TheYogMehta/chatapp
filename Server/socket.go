@@ -1,12 +1,14 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -20,9 +22,10 @@ type Frame struct {
 }
 
 type Client struct {
-	id   string
-	conn *websocket.Conn
-	mu   sync.Mutex
+	id    string
+	email string
+	conn  *websocket.Conn
+	mu    sync.Mutex
 }
 
 type Session struct {
@@ -32,10 +35,11 @@ type Session struct {
 }
 
 type Server struct {
-	clients  map[string]*Client
-	sessions map[string]*Session
-	invites  map[string]string 
-	mu       sync.Mutex
+	clients         map[string]*Client
+	sessions        map[string]*Session
+	emailToClientId map[string]string
+	mu              sync.Mutex
+	logger          *log.Logger
 }
 
 var upgrader = websocket.Upgrader{
@@ -48,12 +52,42 @@ func (s *Server) newID() string {
 	return fmt.Sprintf("%d_%s", time.Now().UnixMilli(), hex.EncodeToString(b))
 }
 
+func verifyGoogleToken(token string) (string, error) {
+	resp, err := http.Get("https://oauth2.googleapis.com/tokeninfo?id_token=" + token)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("invalid token")
+	}
+
+	var claims struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&claims); err != nil {
+		return "", err
+	}
+	return claims.Email, nil
+}
+
 func (s *Server) send(c *Client, f Frame) error {
 	if c == nil { return nil }
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	_ = c.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 	return c.conn.WriteJSON(f)
+}
+
+func (s *Server) logConnection(initiator, target string) {
+	h1 := sha256.Sum256([]byte(initiator))
+	iHash := hex.EncodeToString(h1[:])
+	
+	h2 := sha256.Sum256([]byte(target))
+	tHash := hex.EncodeToString(h2[:])
+
+	s.logger.Printf("CONNECTION: %s requested connection to %s on %s", iHash, tHash, time.Now().Format(time.RFC3339))
 }
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
@@ -83,6 +117,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		s.mu.Lock()
 		delete(s.clients, client.id)
+		if client.email != "" {
+			delete(s.emailToClientId, client.email)
+		}
 		s.mu.Unlock()
 
 		for _, sess := range s.sessions {
@@ -111,69 +148,70 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		if err := ws.ReadJSON(&frame); err != nil { break }
 
 		switch frame.T {
-		// Genrate a invite code
-		case "CREATE_SESSION":
-			sid := s.newID()
-			code := fmt.Sprintf("%06d", rand.Intn(1000000))
-
-			s.mu.Lock()
-
-			s.sessions[sid] = &Session{id: sid, clients: map[string]*Client{client.id: client}}
-
-			s.invites[code] = sid
-			s.mu.Unlock()
-
-			log.Printf("[Server] Created Session %s with Code %s", sid, code)
-			s.send(client, Frame{
-				T:   "INVITE_CODE",
-				SID: sid,
-				Data: json.RawMessage(fmt.Sprintf(`{"code":"%s"}`, code)),
-			})
-		// Joins another client with invite code
-		case "JOIN":
+		case "AUTH":
 			var d struct {
-				Code      string `json:"code"`
-				PublicKey string `json:"publicKey"`
+				Token string `json:"token"`
 			}
-
 			json.Unmarshal(frame.Data, &d)
-
-			s.mu.Lock()
-			sid, ok := s.invites[d.Code]
-			if !ok {
-				s.mu.Unlock()
-				s.send(client, Frame{T: "ERROR", Data: json.RawMessage(`{"message":"Invalid or expired code"}`)})
+			email, err := verifyGoogleToken(d.Token)
+			if err != nil {
+				s.send(client, Frame{T: "ERROR", Data: json.RawMessage(`{"message":"Auth failed"}`)})
 				continue
 			}
-
-			sess := s.sessions[sid]
-			sess.mu.Lock()
-			sess.clients[client.id] = client
-
-			var creator *Client
-			for _, c := range sess.clients {
-				if c.id != client.id {
-					creator = c
-					break
-				}
-			}
+			client.mu.Lock()
+			client.email = email
+			client.mu.Unlock()
 			
-			if creator != nil {
-				s.send(creator, Frame{
+			s.mu.Lock()
+			s.emailToClientId[email] = client.id
+			s.mu.Unlock()
+			
+			s.send(client, Frame{T: "AUTH_SUCCESS", Data: json.RawMessage(fmt.Sprintf(`{"email":"%s"}`, email))})
+
+		// Connect via Email
+		case "CONNECT_REQ":
+			if client.email == "" {
+				s.send(client, Frame{T: "ERROR", Data: json.RawMessage(`{"message":"Authentication required"}`)})
+				continue
+			}
+			var d struct {
+				TargetEmail string `json:"targetEmail"`
+				PublicKey   string `json:"publicKey"`
+			}
+			json.Unmarshal(frame.Data, &d)
+			
+			s.logConnection(client.email, d.TargetEmail)
+
+			s.mu.Lock()
+			targetClientId, ok := s.emailToClientId[d.TargetEmail]
+			if !ok {
+				s.mu.Unlock()
+				s.send(client, Frame{T: "ERROR", Data: json.RawMessage(`{"message":"User not online"}`)})
+				continue
+			}
+			targetClient := s.clients[targetClientId]
+			
+			// Create a session ID deterministically or randomly - let's use random for now but unique
+			sid := s.newID()
+			
+			// Init the session
+			s.sessions[sid] = &Session{id: sid, clients: map[string]*Client{client.id: client}}
+			s.mu.Unlock()
+
+			// Send Invite to Target
+			if targetClient != nil {
+				s.send(targetClient, Frame{
 					T:   "JOIN_REQUEST",
 					SID: sid,
-					Data: json.RawMessage(fmt.Sprintf(`{"publicKey":"%s"}`, d.PublicKey)),
+					Data: json.RawMessage(fmt.Sprintf(`{"publicKey":"%s", "email":"%s"}`, d.PublicKey, client.email)),
 				})
 			}
 
-			sess.mu.Unlock()
-			delete(s.invites, d.Code)
-			s.mu.Unlock()
-		// Client Accept the request
 		case "JOIN_ACCEPT":
 			s.mu.Lock()
 			if sess, ok := s.sessions[frame.SID]; ok {
 				sess.mu.Lock()
+				sess.clients[client.id] = client // Add accepter to session
 				for _, c := range sess.clients {
 					if c.id != client.id {
 						s.send(c, Frame{T: "JOIN_ACCEPT", SID: frame.SID, Data: frame.Data})
@@ -197,7 +235,11 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			s.mu.Unlock()
 		// Reconnect CLient
 		case "REATTACH":
-				s.mu.Lock()
+			if client.email == "" {
+				s.send(client, Frame{T: "ERROR", Data: json.RawMessage(`{"message":"Authentication required"}`)})
+				continue
+			}
+			s.mu.Lock()
 
 				sess, ok := s.sessions[frame.SID]
 				if !ok {
@@ -273,10 +315,17 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	f, err := os.OpenFile("connections.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalf("error opening file: %v", err)
+	}
+	defer f.Close()
+
 	s := &Server{
-		clients:  make(map[string]*Client),
-		sessions: make(map[string]*Session),
-		invites:  make(map[string]string),
+		clients:         make(map[string]*Client),
+		sessions:        make(map[string]*Session),
+		emailToClientId: make(map[string]string),
+		logger:          log.New(f, "", 0),
 	}
 	http.HandleFunc("/", s.handle)
 	log.Println("✅ Secure E2E Relay Server running on :9000")

@@ -25,8 +25,9 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self' 'unsafe-inline' 'unsafe-eval' ws: wss: http: https: data: blob: filesystem:;"
+      content="default-src 'self' 'unsafe-inline' 'unsafe-eval' ws: wss: http: https: data: blob: filesystem:; frame-src https://accounts.google.com;"
     />
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
   <body>
     <div id="root"></div>

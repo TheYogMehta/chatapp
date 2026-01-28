@@ -23,6 +23,7 @@ const SCHEMA = {
       alias_avatar TEXT,
       peer_name TEXT,
       peer_avatar TEXT,
+      peer_email TEXT,
       peer_name_ver INTEGER DEFAULT 0,
       peer_avatar_ver INTEGER DEFAULT 0
     `,

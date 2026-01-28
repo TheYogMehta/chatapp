@@ -1,5 +1,6 @@
 import { styles } from "../../Home.styles";
 import ChatClient from "../../../../services/ChatClient";
+import { colors } from "../../../../theme/colors";
 
 export const RequestModal = ({
   inboundReq,
@@ -12,16 +13,24 @@ export const RequestModal = ({
       {isWaiting ? (
         <>
           <div style={styles.spinner}></div>
-          <h3>Waiting for Peer...</h3>
-          <p>Establishing secure handshake.</p>
+          <h3 style={{ color: colors.text.primary, marginTop: 0 }}>Waiting for Peer...</h3>
+          <p style={{ color: colors.text.secondary }}>Establishing secure handshake.</p>
           <button onClick={() => setIsWaiting(false)} style={styles.cancelBtn}>
             Cancel
           </button>
         </>
       ) : (
         <>
-          <h3>Peer Request</h3>
-          <p>Accept link from {inboundReq?.sid.slice(0, 8)}?</p>
+          <h3 style={{ color: colors.text.primary, marginTop: 0 }}>Peer Request</h3>
+          <p style={{ color: colors.text.primary }}>
+            Request from{" "}
+            <span style={{ color: colors.primary, fontWeight: 600 }}>
+              {(inboundReq as any).email || "Unknown"}
+            </span>
+          </p>
+          <p style={{ fontSize: "0.8em", color: colors.text.muted }}>
+            Session ID: {inboundReq?.sid.slice(0, 8)}
+          </p>
           <div style={styles.modalButtons}>
             <button
               onClick={async () => {
@@ -36,7 +45,10 @@ export const RequestModal = ({
               Accept
             </button>
             <button
-              onClick={() => setInboundReq(null)}
+              onClick={() => {
+                ChatClient.denyFriend(inboundReq!.sid);
+                setInboundReq(null);
+              }}
               style={styles.cancelBtn}
             >
               Decline

@@ -21,6 +21,7 @@ import {
   AppLock,
   ToggleAppLock,
 } from "../../services/SafeStorage";
+import { colors } from "../../theme/colors";
 
 type Mode = "setup" | "unlock";
 
@@ -130,20 +131,21 @@ const AppLockScreen: React.FC<Props> = ({ mode, onSuccess }) => {
   return (
     <IonPage>
       <IonHeader>
-        <IonToolbar color="primary">
+        <IonToolbar style={{ "--background": colors.background, "--border-color": colors.border }}>
           <IonTitle>
             {mode === "setup" ? "Security Setup" : "Unlock App"}
           </IonTitle>
         </IonToolbar>
       </IonHeader>
-      <IonContent className="ion-padding ion-text-center">
+      <IonContent className="ion-padding ion-text-center" style={{ "--background": colors.background }}>
+        <div style={{ maxWidth: '400px', margin: '0 auto', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
         {lockoutUntil ? (
           <div style={{ marginTop: "60px" }}>
             <IonText color="danger">
-              <h1>Temporarily Locked</h1>
+              <h1 className="title-large">Temporarily Locked</h1>
             </IonText>
-            <p>Too many failed attempts.</p>
-            <p>
+            <p style={{ color: colors.text.secondary }}>Too many failed attempts.</p>
+            <p style={{ color: colors.text.primary, fontSize: '1.2rem', marginTop: '1rem' }}>
               Try again in:{" "}
               <strong>
                 {Math.floor(secondsLeft / 60)}m {secondsLeft % 60}s
@@ -152,9 +154,13 @@ const AppLockScreen: React.FC<Props> = ({ mode, onSuccess }) => {
           </div>
         ) : step === 1 ? (
           <div style={{ marginTop: "40px" }}>
-            <h2>Choose PIN Length</h2>
+            <h2 className="title-large">Choose PIN Length</h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '2rem' }}>
             <IonButton
               expand="block"
+              shape="round"
+              className="glass-panel"
+              style={{ minHeight: '60px', "--background": "transparent", "--color": colors.text.primary, border: `1px solid ${colors.border}` }}
               onClick={() => {
                 setLength(4);
                 setStep(2);
@@ -164,7 +170,9 @@ const AppLockScreen: React.FC<Props> = ({ mode, onSuccess }) => {
             </IonButton>
             <IonButton
               expand="block"
+              shape="round"
               fill="outline"
+              style={{ minHeight: '60px', "--color": colors.text.secondary }}
               onClick={() => {
                 setLength(6);
                 setStep(2);
@@ -172,21 +180,25 @@ const AppLockScreen: React.FC<Props> = ({ mode, onSuccess }) => {
             >
               6 Digits
             </IonButton>
+            </div>
           </div>
         ) : step === 4 ? (
           <div style={{ marginTop: "40px" }}>
             <IonText color="success">
-              <h1>PIN Created!</h1>
+              <h1 className="title-large" style={{ color: colors.status.success }}>PIN Created!</h1>
             </IonText>
-            <IonItem lines="none" className="ion-margin-top">
-              <IonLabel>Require PIN on startup</IonLabel>
+            <div className="glass-panel" style={{ padding: '20px', borderRadius: '16px', marginTop: '2rem' }}>
+            <IonItem lines="none" style={{ "--background": "transparent" }}>
+              <IonLabel style={{ color: colors.text.primary }}>Require PIN on startup</IonLabel>
               <IonToggle
                 checked={isLockEnabled}
                 onIonChange={(e) => setIsLockEnabled(e.detail.checked)}
               />
             </IonItem>
+            </div>
             <IonButton
               expand="block"
+              shape="round"
               onClick={finalizeSetup}
               style={{ marginTop: "40px" }}
             >
@@ -194,35 +206,47 @@ const AppLockScreen: React.FC<Props> = ({ mode, onSuccess }) => {
             </IonButton>
           </div>
         ) : (
-          <div style={{ marginTop: "40px" }}>
-            <h2>{step === 3 ? "Confirm your PIN" : "Enter your PIN"}</h2>
+          <div style={{ marginTop: "20px" }}>
+            <h2 style={{ color: colors.text.secondary, fontWeight: 500 }}>{step === 3 ? "Confirm your PIN" : "Enter your PIN"}</h2>
             <div
               style={{
                 fontSize: "32px",
                 letterSpacing: "12px",
                 margin: "30px 0",
+                color: colors.primary,
+                fontWeight: 700
               }}
             >
               {"●".repeat(step === 3 ? confirm.length : code.length)}
-              <span style={{ color: "#ccc" }}>
+              <span style={{ color: "#333" }}>
                 {"○".repeat(
                   length! - (step === 3 ? confirm.length : code.length)
                 )}
               </span>
             </div>
 
-            <IonGrid style={{ maxWidth: "280px" }}>
+            <IonGrid style={{ maxWidth: "280px", margin: "0 auto" }}>
               <IonRow>
                 {[1, 2, 3, 4, 5, 6, 7, 8, 9, "", 0, "←"].map((val, i) => (
                   <IonCol size="4" key={i}>
+                    {val !== "" ? (
                     <IonButton
-                      expand="block"
                       fill="clear"
-                      size="large"
-                      onClick={() => val !== "" && handleInput(val)}
+                      className="glass-panel"
+                      style={{ 
+                          width: '70px', 
+                          height: '70px', 
+                          borderRadius: '50%', 
+                          fontSize: '24px', 
+                          margin: '0 auto',
+                          "--color": colors.text.primary,
+                          "--background": colors.surfaceHighlight
+                      }}
+                      onClick={() => handleInput(val)}
                     >
                       {val}
                     </IonButton>
+                    ) : null}
                   </IonCol>
                 ))}
               </IonRow>
@@ -230,11 +254,12 @@ const AppLockScreen: React.FC<Props> = ({ mode, onSuccess }) => {
 
             {error && (
               <IonText color="danger">
-                <p>{error}</p>
+                <p style={{ marginTop: '1rem' }}>{error}</p>
               </IonText>
             )}
           </div>
         )}
+        </div>
       </IonContent>
     </IonPage>
   );

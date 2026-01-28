@@ -17,11 +17,14 @@ interface ServerFrame {
 interface ChatSession {
   cryptoKey: CryptoKey;
   online: boolean;
+  peerEmail?: string;
 }
 
-class ChatClient extends EventEmitter {
+export class ChatClient extends EventEmitter {
   private static instance: ChatClient;
   public sessions: Record<string, ChatSession> = {};
+  public userEmail: string | null = null;
+  private authToken: string | null = null;
   private identityKeyPair: CryptoKeyPair | null = null;
   private audioContext: AudioContext | null = null;
 
@@ -29,15 +32,29 @@ class ChatClient extends EventEmitter {
     if (!ChatClient.instance) ChatClient.instance = new ChatClient();
     return ChatClient.instance;
   }
+  
+  public hasToken(): boolean {
+      return !!this.authToken;
+  }
 
   async init() {
     await dbInit();
     await this.loadIdentity();
     await this.loadSessions();
+
+    const storedToken = await getKeyFromSecureStorage("auth_token");
+    if (storedToken) {
+      this.authToken = storedToken;
+      console.log("[Client] Restored session token");
+    }
+
     this.emit("session_updated");
 
     socket.on("WS_CONNECTED", () => {
       this.emit("status", true);
+      if (this.authToken) {
+        this.send({ t: "AUTH", data: { token: this.authToken } });
+      }
       Object.keys(this.sessions).forEach((sid) =>
         this.send({ t: "REATTACH", sid }),
       );
@@ -79,15 +96,19 @@ class ChatClient extends EventEmitter {
     }
   }
 
-  // --- Actions ---
-  public createInvite() {
-    this.send({ t: "CREATE_SESSION" });
+  public async login(token: string) {
+    this.authToken = token;
+    await setKeyFromSecureStorage("auth_token", token);
+    this.send({ t: "AUTH", data: { token } });
   }
 
-  public async joinByCode(code: string) {
+  // --- Actions ---
+  public async connectToPeer(targetEmail: string) {
+    if (!this.userEmail) {
+      throw new Error("Must be logged in to connect");
+    }
     const pub = await this.exportPub();
-    this.emit("waiting_for_accept", true);
-    this.send({ t: "JOIN", data: { code, publicKey: pub } });
+    this.send({ t: "CONNECT_REQ", data: { targetEmail, publicKey: pub } });
   }
 
   public async acceptFriend(sid: string, remotePub: string) {
@@ -514,14 +535,32 @@ class ChatClient extends EventEmitter {
       .catch(() => null);
   }
 
+  public async logout() {
+      this.authToken = null;
+      this.userEmail = null;
+      await setKeyFromSecureStorage("auth_token", "");
+      this.emit("auth_error");
+  }
+
   private async handleFrame(frame: ServerFrame) {
     const { t, sid, data } = frame;
     switch (t) {
+      case "ERROR":
+          console.error("[Client] Server Error:", data);
+          if (data.message === "Auth failed" || data.message === "Authentication required") {
+              await this.logout();
+          }
+          this.emit("notification", { type: "error", message: data.message });
+          break;
       case "INVITE_CODE":
         this.emit("invite_ready", data.code);
         break;
+      case "AUTH_SUCCESS":
+        this.userEmail = data.email;
+        this.emit("auth_success", data.email);
+        break;
       case "JOIN_REQUEST":
-        this.emit("inbound_request", { sid, publicKey: data.publicKey });
+        this.emit("inbound_request", { sid, publicKey: data.publicKey, email: data.email });
         break;
       case "JOIN_ACCEPT":
         await this.finalizeSession(sid, data.publicKey);
@@ -557,13 +596,16 @@ class ChatClient extends EventEmitter {
     socket.send(f);
   }
 
-  private async finalizeSession(sid: string, remotePubB64: string) {
+  // acceptFriend is duplicate, removing this block.
+  // private async finalizeSession(sid: string, remotePubB64: string, peerEmail?: string) ... this is correct
+
+  private async finalizeSession(sid: string, remotePubB64: string, peerEmail?: string) {
     const sharedKey = await this.deriveSharedKey(remotePubB64);
-    this.sessions[sid] = { cryptoKey: sharedKey, online: true };
+    this.sessions[sid] = { cryptoKey: sharedKey, online: true, peerEmail };
     const jwk = await crypto.subtle.exportKey("jwk", sharedKey);
     await executeDB(
-      "INSERT OR REPLACE INTO sessions (sid, keyJWK) VALUES (?, ?)",
-      [sid, JSON.stringify(jwk)],
+      "INSERT OR REPLACE INTO sessions (sid, keyJWK, peer_email) VALUES (?, ?, ?)",
+      [sid, JSON.stringify(jwk), peerEmail || null],
     );
     this.emit("session_updated");
   }

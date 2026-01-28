@@ -24,6 +24,7 @@ import {
   setKeyFromSecureStorage,
   initlock,
 } from "../../services/SafeStorage";
+import { colors } from "../../theme/colors";
 
 type Props = {
   onComplete: () => Promise<void> | void;
@@ -66,31 +67,28 @@ const SetupMasterKey: React.FC<Props> = ({ onComplete }) => {
   return (
     <IonPage ref={pageRef}>
       <IonHeader>
-        <IonToolbar color="primary">
+        <IonToolbar style={{ "--background": colors.background, "--border-color": colors.border }}>
           <IonTitle>ChatApp Setup</IonTitle>
         </IonToolbar>
       </IonHeader>
 
-      <IonContent className="ion-padding">
-        <h2>Welcome to ChatApp</h2>
-        <p>
-          Generate a recovery passphrase. This is required to decrypt your data
-          if you move devices.
-        </p>
-        <p>
-          <strong>Do not lose it.</strong>
-        </p>
+      <IonContent className="ion-padding" style={{ "--background": colors.background }}>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'center', alignItems: 'center' }}>
+          <h2 className="title-large" style={{ marginTop: 0 }}>Welcome to GhostTalk</h2>
+          <p style={{ color: colors.text.secondary, maxWidth: '300px', textAlign: 'center', marginBottom: '2rem' }}>
+            Generate a recovery passphrase. This is required to decrypt your data
+            if you move devices.
+          </p>
+          <div className="glass-panel" style={{ padding: '20px', borderRadius: '16px', marginBottom: '2rem', border: `1px solid ${colors.status.warning}` }}>
+            <p style={{ color: colors.status.warning, fontWeight: 600, margin: 0 }}>
+              ⚠ Do not lose it.
+            </p>
+          </div>
+          <IonButton expand="block" shape="round" style={{ width: '100%', maxWidth: '300px' }} onClick={startSetup}>
+            Start Setup
+          </IonButton>
+        </div>
       </IonContent>
-
-      <IonFooter>
-        <IonToolbar>
-          <IonButtons className="ion-justify-content-center">
-            <IonButton expand="block" onClick={startSetup}>
-              Start Setup
-            </IonButton>
-          </IonButtons>
-        </IonToolbar>
-      </IonFooter>
 
       <IonModal
         isOpen={isModalOpen}
@@ -105,12 +103,13 @@ const SetupMasterKey: React.FC<Props> = ({ onComplete }) => {
       >
         <IonPage>
           <IonHeader>
-            <IonToolbar>
+            <IonToolbar style={{ "--background": colors.surface, "--border-color": colors.border }}>
               <IonTitle>Recovery Passphrase</IonTitle>
             </IonToolbar>
           </IonHeader>
 
-          <IonContent className="ion-padding">
+          <IonContent className="ion-padding" style={{ "--background": colors.background }}>
+            <div style={{ padding: '1rem' }}>
             <IonGrid>
               <IonRow>
                 {passphrase.split(" ").map((word, i) => (
@@ -118,29 +117,32 @@ const SetupMasterKey: React.FC<Props> = ({ onComplete }) => {
                     <IonText
                       style={{
                         display: "block",
-                        background: "#2a2a2a",
-                        color: "white",
-                        padding: 10,
-                        borderRadius: 6,
+                        background: colors.surfaceHighlight,
+                        color: colors.text.primary,
+                        padding: 12,
+                        borderRadius: 8,
                         textAlign: "center",
+                        border: `1px solid ${colors.border}`,
+                        fontWeight: 500
                       }}
                     >
-                      {word}
+                      <span style={{ color: colors.text.muted, fontSize: '0.8rem', marginRight: 4 }}>{i+1}.</span> {word}
                     </IonText>
                   </IonCol>
                 ))}
               </IonRow>
             </IonGrid>
 
-            <IonButton expand="block" onClick={handleCopyToClipboard}>
-              Copy Passphrase
-            </IonButton>
+            <div style={{ marginTop: '2rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <IonButton expand="block" fill="outline" onClick={handleCopyToClipboard}>
+                {isCopied ? "Copied!" : "Copy Passphrase"}
+              </IonButton>
 
-            {isCopied && <IonText color="success">Copied</IonText>}
-
-            <IonButton expand="block" onClick={finishSetup}>
-              Continue
-            </IonButton>
+              <IonButton expand="block" onClick={finishSetup}>
+                I have saved it safely
+              </IonButton>
+            </div>
+            </div>
           </IonContent>
         </IonPage>
       </IonModal>
