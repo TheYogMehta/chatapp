@@ -163,6 +163,16 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			client.mu.Unlock()
 			
 			s.mu.Lock()
+			if oldClientID, exists := s.emailToClientId[email]; exists {
+				if oldClient, ok := s.clients[oldClientID]; ok {
+					// Disconnect the old client
+					s.mu.Unlock() // Unlock before sending to avoid deadlock if send locks
+					s.send(oldClient, Frame{T: "ERROR", Data: json.RawMessage(`{"message":"Logged in from another device"}`)})
+					oldClient.conn.Close() // This will trigger defer disconnect logic
+					s.mu.Lock() // Relock
+					delete(s.clients, oldClientID)
+				}
+			}
 			s.emailToClientId[email] = client.id
 			s.mu.Unlock()
 			

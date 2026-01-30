@@ -50,10 +50,15 @@ export const generateThumbnail = async (
   return new Promise((resolve, reject) => {
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
+    console.log(`[imageUtils] generateThumbnail called for ${mimeType}`);
     const media = isVideo ? document.createElement("video") : new Image();
 
     media.crossOrigin = "anonymous";
-    const source = Capacitor.convertFileSrc(fileUri);
+    const source = fileUri.startsWith("blob:") 
+      ? fileUri 
+      : Capacitor.convertFileSrc(fileUri);
+    
+    console.log(`[imageUtils] Source URI: ${source.substring(0, 50)}...`);
 
     const timeout = setTimeout(() => {
       cleanup();
