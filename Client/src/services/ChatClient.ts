@@ -30,6 +30,7 @@ export class ChatClient extends EventEmitter {
   private localStream: MediaStream | null = null;
   private remoteStream: MediaStream | null = null;
   private iceCandidatesQueue: RTCIceCandidate[] = [];
+  private remoteAudio: HTMLAudioElement | null = null;
 
   static getInstance() {
     if (!ChatClient.instance) ChatClient.instance = new ChatClient();
@@ -284,6 +285,12 @@ export class ChatClient extends EventEmitter {
 
     } catch (err) {
       console.error("Error starting call:", err);
+      // Emit notification so UI shows toast
+      this.emit("notification", {
+        type: "error",
+        message: "Could not access microphone/camera. Please check permissions."
+      });
+      // Also emit legacy error for logs
       this.emit("error", "Could not start call");
       this.endCall(sid);
     }
@@ -321,6 +328,10 @@ export class ChatClient extends EventEmitter {
 
     } catch (err) {
       console.error("Error accepting call:", err);
+      this.emit("notification", {
+        type: "error",
+        message: "Failed to accept call (Microphone error?)"
+      });
     }
   }
 
@@ -342,6 +353,11 @@ export class ChatClient extends EventEmitter {
     if (this.peerConnection) {
       this.peerConnection.close();
       this.peerConnection = null;
+    }
+    if (this.remoteAudio) {
+      this.remoteAudio.pause();
+      this.remoteAudio.remove();
+      this.remoteAudio = null;
     }
     this.remoteStream = null;
     this.iceCandidatesQueue = [];
@@ -377,6 +393,7 @@ export class ChatClient extends EventEmitter {
       // Attach to DOM (hidden) to prevent GC and ensure playback policies
       audio.style.display = "none";
       document.body.appendChild(audio);
+      this.remoteAudio = audio;
 
       audio.play().catch(e => {
         console.error("[ChatClient] Audio auto-play failed", e);
