@@ -263,6 +263,7 @@ export class ChatClient extends EventEmitter {
       const stream = await navigator.mediaDevices.getUserMedia(
         mode === "Audio" ? { audio: true } : { audio: true, video: true }
       );
+      console.log("[ChatClient] startCall: Got local stream", stream.id);
       this.localStream = stream;
       stream.getTracks().forEach(track => {
         if (this.peerConnection) {
@@ -299,6 +300,7 @@ export class ChatClient extends EventEmitter {
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log("[ChatClient] acceptCall: Got local stream", stream.id);
       this.localStream = stream;
       stream.getTracks().forEach(track => {
         if (this.peerConnection) {
@@ -354,9 +356,10 @@ export class ChatClient extends EventEmitter {
 
     this.peerConnection.onicecandidate = async (event) => {
       if (event.candidate) {
+        console.log("[ChatClient] Sending ICE candidate");
         const payload = await this.encryptForSession(
           sid,
-          JSON.stringify({ t: "ICE_CANDIDATE", data: event.candidate })
+          JSON.stringify({ t: "ICE_CANDIDATE", data: event.candidate.toJSON() })
         );
         this.send({ t: "MSG", sid, data: { payload } });
       }
@@ -387,12 +390,16 @@ export class ChatClient extends EventEmitter {
     };
 
     this.peerConnection.onconnectionstatechange = () => {
-      console.log("Connection state:", this.peerConnection?.connectionState);
+      console.log("[ChatClient] Connection state:", this.peerConnection?.connectionState);
       if (this.peerConnection?.connectionState === 'disconnected' ||
         this.peerConnection?.connectionState === 'failed') {
         this.cleanupCall();
         this.emit("call_ended", sid);
       }
+    };
+
+    this.peerConnection.oniceconnectionstatechange = () => {
+      console.log("[ChatClient] ICE Connection state:", this.peerConnection?.iceConnectionState);
     };
   }
 
@@ -499,12 +506,22 @@ export class ChatClient extends EventEmitter {
           break;
 
         case "ICE_CANDIDATE":
-          console.log("[ChatClient] Received ICE_CANDIDATE");
-          const candidate = new RTCIceCandidate(data);
-          if (this.peerConnection && this.peerConnection.remoteDescription) {
-            await this.peerConnection.addIceCandidate(candidate);
-          } else {
-            this.iceCandidatesQueue.push(candidate);
+          try {
+            console.log("[ChatClient] Received ICE_CANDIDATE", data);
+            // Ensure data is in correct format (it should be since we send .toJSON())
+            const candidate = new RTCIceCandidate(data);
+            if (this.peerConnection) {
+              if (this.peerConnection.remoteDescription) {
+                await this.peerConnection.addIceCandidate(candidate).catch(e => {
+                  console.error("[ChatClient] AddIceCandidate failed", e);
+                });
+              } else {
+                console.log("[ChatClient] Queuing ICE candidate (no remote desc)");
+                this.iceCandidatesQueue.push(candidate);
+              }
+            }
+          } catch (e) {
+            console.error("[ChatClient] Error handling ICE candidate", e);
           }
           break;
 
