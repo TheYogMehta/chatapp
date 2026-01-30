@@ -13,6 +13,7 @@ import {
   MapPin,
   Headphones,
   Globe,
+  Phone,
 } from "lucide-react";
 
 export const ChatWindow = ({
@@ -22,6 +23,7 @@ export const ChatWindow = ({
   onSend,
   activeChat,
   onFileSelect,
+  onStartCall,
 }: any) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -77,6 +79,16 @@ export const ChatWindow = ({
       label: "Audio",
       icon: <Headphones size={24} color="white" />,
       color: "#2cb67d",
+      onClick: () => fileInputRef.current?.click(),
+    },
+    {
+      label: "Voice Call",
+      icon: <Phone size={24} color="white" />,
+      color: "#22c55e",
+      onClick: () => {
+        onStartCall("Audio");
+        setShowMenu(false);
+      },
     },
     {
       label: "Live Share",

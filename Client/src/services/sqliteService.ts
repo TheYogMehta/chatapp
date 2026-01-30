@@ -91,7 +91,7 @@ export const dbInit = () => {
         mode: "secret",
         version: 1,
       });
-    } catch {}
+    } catch { }
 
     await CapacitorSQLite.open({ database: DATABASE_NAME });
 
@@ -172,16 +172,16 @@ async function syncTableSchema(tableName: string, targetColumnsRaw: string) {
 
     const statements = [
       `PRAGMA foreign_keys=OFF;`,
-      `BEGIN TRANSACTION;`,
+
       `CREATE TABLE ${tableName}_new(${targetColumnsStr});`,
       ...(sharedColumns.length > 0
         ? [
-            `INSERT INTO ${tableName}_new (${sharedColumns}) SELECT ${sharedColumns} FROM ${tableName};`,
-          ]
+          `INSERT INTO ${tableName}_new (${sharedColumns}) SELECT ${sharedColumns} FROM ${tableName};`,
+        ]
         : []),
       `DROP TABLE ${tableName};`,
       `ALTER TABLE ${tableName}_new RENAME TO ${tableName};`,
-      `COMMIT;`,
+
       `PRAGMA foreign_keys=ON;`,
     ];
 
