@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from "react";
 import { styles } from "../../Home.styles";
 import { MessageBubble } from "./MessageBubble";
 import { PortShareModal } from "./PortShareModal";
-import ChatClient from "../../../../services/ChatClient";
 import {
   Send,
   Mic,
@@ -15,6 +14,18 @@ import {
   Globe,
   Phone,
 } from "lucide-react";
+import { ChatMessage } from "../../types";
+
+interface ChatWindowProps {
+  messages: ChatMessage[];
+  input: string;
+  setInput: (val: string) => void;
+  onSend: () => void;
+  activeChat: string | null;
+  onFileSelect: (file: File) => void;
+  onStartCall: (mode: "Audio" | "Video") => void;
+  peerOnline?: boolean;
+}
 
 export const ChatWindow = ({
   messages,
@@ -24,7 +35,7 @@ export const ChatWindow = ({
   activeChat,
   onFileSelect,
   onStartCall,
-}: any) => {
+}: ChatWindowProps) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -169,7 +180,7 @@ export const ChatWindow = ({
         onChange={handleFileSelect}
       />
       <div ref={scrollRef} style={styles.messageList} className="animate-fade-up">
-        {messages.map((msg: any, i: number) => (
+        {messages.map((msg, i) => (
           <MessageBubble key={i} msg={msg} />
         ))}
       </div>
@@ -265,7 +276,7 @@ export const ChatWindow = ({
         onClose={() => setShowPortModal(false)}
         port={port}
         setPort={setPort}
-        onConfirm={(p) => {
+        onConfirm={() => {
           setShowPortModal(false);
           setShowMenu(false);
         }}

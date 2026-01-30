@@ -495,6 +495,7 @@ export class ChatClient extends EventEmitter {
             const c = this.iceCandidatesQueue.shift();
             if (this.peerConnection) await this.peerConnection.addIceCandidate(c!);
           }
+          this.emit("call_started", { sid, status: "connected", remoteSid: sid });
           break;
 
         case "ICE_CANDIDATE":
