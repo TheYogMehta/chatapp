@@ -137,6 +137,13 @@ export const useChatLogic = () => {
     client.on("call_incoming", (call) =>
       setActiveCall({ ...call, status: "ringing" }),
     );
+    client.on("call_outgoing", (call) =>
+      setActiveCall({ ...call, status: "outgoing" }),
+    );
+    client.on("call_started", () =>
+      setActiveCall((prev: any) => (prev ? { ...prev, status: "connected" } : null)),
+    );
+    client.on("call_ended", () => setActiveCall(null));
     client.on("message_status", ({ sid }) => {
       if (sid === activeChatRef.current) {
         loadHistory(sid);
@@ -152,7 +159,7 @@ export const useChatLogic = () => {
       client.off("session_updated", onSessionUpdate);
       client.off("message", onMsg);
       client.off("file_downloaded", onFileDownloaded);
-      client.off("auth_success", () => {});
+      client.off("auth_success", () => { });
     };
   }, []);
 
@@ -186,8 +193,8 @@ export const useChatLogic = () => {
       type: file.type.startsWith("image")
         ? "image"
         : file.type.startsWith("video")
-        ? "video"
-        : "file",
+          ? "video"
+          : "file",
       timestamp: Date.now(),
       status: 1,
       mediaStatus: "uploading",
@@ -215,52 +222,52 @@ export const useChatLogic = () => {
     if (!targetEmail) return;
     setIsJoining(true);
     try {
-        await ChatClient.connectToPeer(targetEmail);
-        setIsJoining(false); // Request sent
-        setNotification({ type: 'success', message: 'Connection request sent' });
-        setTargetEmail(""); 
-    } catch(e) {
-        console.error(e);
-        setIsJoining(false);
-        setNotification({ type: 'error', message: 'Failed to send request' });
+      await ChatClient.connectToPeer(targetEmail);
+      setIsJoining(false); // Request sent
+      setNotification({ type: 'success', message: 'Connection request sent' });
+      setTargetEmail("");
+    } catch (e) {
+      console.error(e);
+      setIsJoining(false);
+      setNotification({ type: 'error', message: 'Failed to send request' });
     }
   }
 
   return {
     state: {
-       view,
-       activeChat,
-       activeCall,
-       messages,
-       sessions,
-       input,
-       isJoining,
-       targetEmail,
-       isWaiting,
-       inboundReq,
-       error,
-       peerOnline,
-       isSidebarOpen,
-       notification,
-       userEmail,
-       isLoading
+      view,
+      activeChat,
+      activeCall,
+      messages,
+      sessions,
+      input,
+      isJoining,
+      targetEmail,
+      isWaiting,
+      inboundReq,
+      error,
+      peerOnline,
+      isSidebarOpen,
+      notification,
+      userEmail,
+      isLoading
     },
     actions: {
-       login: (token: string) => ChatClient.login(token),
-       setView,
-       setActiveChat,
-       setInput,
-       setTargetEmail,
-       setIsSidebarOpen,
-       setInboundReq,
-       setIsWaiting,
-       handleSend,
-       handleFile,
-       handleConnect,
-       startCall: (type: any) => ChatClient.startCall(activeChat!, type),
-       acceptCall: () => ChatClient.acceptCall(activeCall.sid),
-       rejectCall: () => ChatClient.endCall(activeCall.sid),
-       endCall: () => ChatClient.endCall(activeCall.sid),
+      login: (token: string) => ChatClient.login(token),
+      setView,
+      setActiveChat,
+      setInput,
+      setTargetEmail,
+      setIsSidebarOpen,
+      setInboundReq,
+      setIsWaiting,
+      handleSend,
+      handleFile,
+      handleConnect,
+      startCall: (type: any) => ChatClient.startCall(activeChat!, type),
+      acceptCall: () => ChatClient.acceptCall(activeCall.sid),
+      rejectCall: () => ChatClient.endCall(activeCall.sid),
+      endCall: () => ChatClient.endCall(activeCall.sid),
     }
   };
 };

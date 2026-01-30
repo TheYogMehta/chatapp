@@ -26,15 +26,18 @@ export class ChatClient extends EventEmitter {
   public userEmail: string | null = null;
   private authToken: string | null = null;
   private identityKeyPair: CryptoKeyPair | null = null;
-  private audioContext: AudioContext | null = null;
+  private peerConnection: RTCPeerConnection | null = null;
+  private localStream: MediaStream | null = null;
+  private remoteStream: MediaStream | null = null;
+  private iceCandidatesQueue: RTCIceCandidate[] = [];
 
   static getInstance() {
     if (!ChatClient.instance) ChatClient.instance = new ChatClient();
     return ChatClient.instance;
   }
-  
+
   public hasToken(): boolean {
-      return !!this.authToken;
+    return !!this.authToken;
   }
 
   async init() {
@@ -189,10 +192,10 @@ export class ChatClient extends EventEmitter {
     const msgType = isImage
       ? "image"
       : isVideo
-      ? "video"
-      : isAudio
-      ? "audio"
-      : "file";
+        ? "video"
+        : isAudio
+          ? "audio"
+          : "file";
     const messageId = await this.insertMessageRecord(sid, "", msgType, "me");
 
     await StorageService.initMediaEntry(
@@ -252,67 +255,130 @@ export class ChatClient extends EventEmitter {
   }
 
   public async startCall(sid: string, mode: "Audio" | "Video" = "Audio") {
+    if (!this.sessions[sid]) throw new Error("Session not found");
+
+    await this.setupPeerConnection(sid);
+
     try {
-      if (!this.sessions[sid]) throw new Error("Session not found");
       const stream = await navigator.mediaDevices.getUserMedia(
-        mode === "Audio" ? { audio: true } : { audio: true, video: true },
+        mode === "Audio" ? { audio: true } : { audio: true, video: true }
       );
+      this.localStream = stream;
+      stream.getTracks().forEach(track => {
+        if (this.peerConnection) {
+          this.peerConnection.addTrack(track, stream);
+        }
+      });
 
-      if (!this.audioContext || this.audioContext.state === "closed") {
-        this.audioContext = new AudioContext();
-        await this.audioContext.audioWorklet.addModule(
-          "audioWorkletProcessor.js",
-        );
-      }
+      const offer = await this.peerConnection!.createOffer();
+      await this.peerConnection!.setLocalDescription(offer);
 
-      const source = this.audioContext.createMediaStreamSource(stream);
-      const workletNode = new AudioWorkletNode(
-        this.audioContext,
-        "call-processor",
-      );
-      source.connect(workletNode);
-      workletNode.connect(this.audioContext.destination);
-
-      workletNode.port.onmessage = async (event) => {
-        const pcmBuffer = event.data as ArrayBuffer;
-        const payload = await this.encryptForSession(
-          sid,
-          JSON.stringify({ t: "CALL_AUDIO", data: pcmBuffer }),
-        );
-        this.send({ t: "MSG", sid, data: { payload } });
-      };
-
-      const invite = await this.encryptForSession(
+      const payload = await this.encryptForSession(
         sid,
-        JSON.stringify({ t: "CALL_INVITE", mode }),
+        JSON.stringify({ t: "OFFER", data: offer })
       );
-      this.send({ t: "MSG", sid, data: { payload: invite } });
+      this.send({ t: "MSG", sid, data: { payload } });
+
+      this.emit("call_outgoing", { sid, type: mode, remoteSid: sid });
+
     } catch (err) {
-      console.error("Could not start call:", err);
-      this.emit("error", "Microphone access required.");
+      console.error("Error starting call:", err);
+      this.emit("error", "Could not start call");
+      this.endCall(sid);
     }
   }
 
   public async acceptCall(sid: string) {
-    const payload = await this.encryptForSession(
-      sid,
-      JSON.stringify({ t: "CALL_ACCEPT" }),
-    );
-    this.send({ t: "MSG", sid, data: { payload } });
-    this.emit("call_started", { sid, status: "connected" });
+    if (!this.sessions[sid]) return;
+
+    try {
+      if (!this.peerConnection) {
+        console.error("No peer connection to accept");
+        // Attempt to setup if missing (e.g. slight race condition or logic miss)
+        await this.setupPeerConnection(sid);
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.localStream = stream;
+      stream.getTracks().forEach(track => {
+        if (this.peerConnection) {
+          this.peerConnection.addTrack(track, stream);
+        }
+      });
+
+      const answer = await this.peerConnection!.createAnswer();
+      await this.peerConnection!.setLocalDescription(answer);
+
+      const payload = await this.encryptForSession(
+        sid,
+        JSON.stringify({ t: "ANSWER", data: answer })
+      );
+      this.send({ t: "MSG", sid, data: { payload } });
+
+      this.emit("call_started", { sid, status: "connected", remoteSid: sid });
+
+    } catch (err) {
+      console.error("Error accepting call:", err);
+    }
   }
 
   public async endCall(sid: string) {
     const payload = await this.encryptForSession(
       sid,
-      JSON.stringify({ t: "CALL_END" }),
+      JSON.stringify({ t: "CALL_END" })
     );
     this.send({ t: "MSG", sid, data: { payload } });
-    if (this.audioContext) {
-      await this.audioContext.close();
-      this.audioContext = null;
-    }
+    this.cleanupCall();
     this.emit("call_ended", sid);
+  }
+
+  private cleanupCall() {
+    if (this.localStream) {
+      this.localStream.getTracks().forEach(t => t.stop());
+      this.localStream = null;
+    }
+    if (this.peerConnection) {
+      this.peerConnection.close();
+      this.peerConnection = null;
+    }
+    this.remoteStream = null;
+    this.iceCandidatesQueue = [];
+  }
+
+  private async setupPeerConnection(sid: string) {
+    if (this.peerConnection) return;
+
+    this.peerConnection = new RTCPeerConnection({
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+    });
+
+    this.peerConnection.onicecandidate = async (event) => {
+      if (event.candidate) {
+        const payload = await this.encryptForSession(
+          sid,
+          JSON.stringify({ t: "ICE_CANDIDATE", data: event.candidate })
+        );
+        this.send({ t: "MSG", sid, data: { payload } });
+      }
+    };
+
+    this.peerConnection.ontrack = (event) => {
+      console.log("[ChatClient] Received remote track");
+      this.remoteStream = event.streams[0];
+      const audio = new Audio();
+      audio.srcObject = this.remoteStream;
+      audio.autoplay = true;
+      audio.play().catch(e => console.error("Auto-play failed", e));
+    };
+
+    this.peerConnection.onconnectionstatechange = () => {
+      console.log("Connection state:", this.peerConnection?.connectionState);
+      if (this.peerConnection?.connectionState === 'disconnected' ||
+        this.peerConnection?.connectionState === 'failed') {
+        this.cleanupCall();
+        this.emit("call_ended", sid);
+      }
+    };
   }
 
   private async handleMsg(sid: string, payload: string) {
@@ -353,10 +419,10 @@ export class ChatClient extends EventEmitter {
           const msgType = isImage
             ? "image"
             : isVideo
-            ? "video"
-            : isAudio
-            ? "audio"
-            : "file";
+              ? "video"
+              : isAudio
+                ? "audio"
+                : "file";
 
           const localId = await this.insertMessageRecord(
             sid,
@@ -392,13 +458,43 @@ export class ChatClient extends EventEmitter {
         case "FILE_CHUNK":
           await this.handleFileChunk(sid, data);
           break;
-        case "CALL_INVITE":
-          this.emit("call_invite", { sid, mode: data.mode });
+        case "OFFER":
+          console.log("[ChatClient] Received OFFER");
+          await this.setupPeerConnection(sid);
+          await this.peerConnection!.setRemoteDescription(new RTCSessionDescription(data));
+
+          while (this.iceCandidatesQueue.length) {
+            const c = this.iceCandidatesQueue.shift();
+            await this.peerConnection!.addIceCandidate(c!);
+          }
+          this.emit("call_incoming", { sid, type: "Audio", remoteSid: sid });
           break;
-        case "CALL_ACCEPT":
-          this.emit("call_started", { sid, status: "connected" });
+
+        case "ANSWER":
+          console.log("[ChatClient] Received ANSWER");
+          if (this.peerConnection) {
+            await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+          }
+          // Process queued ICE candidates
+          while (this.iceCandidatesQueue.length) {
+            const c = this.iceCandidatesQueue.shift();
+            if (this.peerConnection) await this.peerConnection.addIceCandidate(c!);
+          }
           break;
+
+        case "ICE_CANDIDATE":
+          console.log("[ChatClient] Received ICE_CANDIDATE");
+          const candidate = new RTCIceCandidate(data);
+          if (this.peerConnection && this.peerConnection.remoteDescription) {
+            await this.peerConnection.addIceCandidate(candidate);
+          } else {
+            this.iceCandidatesQueue.push(candidate);
+          }
+          break;
+
         case "CALL_END":
+          console.log("[ChatClient] Received CALL_END");
+          this.cleanupCall();
           this.emit("call_ended", sid);
           break;
       }
@@ -536,22 +632,22 @@ export class ChatClient extends EventEmitter {
   }
 
   public async logout() {
-      this.authToken = null;
-      this.userEmail = null;
-      await setKeyFromSecureStorage("auth_token", "");
-      this.emit("auth_error");
+    this.authToken = null;
+    this.userEmail = null;
+    await setKeyFromSecureStorage("auth_token", "");
+    this.emit("auth_error");
   }
 
   private async handleFrame(frame: ServerFrame) {
     const { t, sid, data } = frame;
     switch (t) {
       case "ERROR":
-          console.error("[Client] Server Error:", data);
-          if (data.message === "Auth failed" || data.message === "Authentication required") {
-              await this.logout();
-          }
-          this.emit("notification", { type: "error", message: data.message });
-          break;
+        console.error("[Client] Server Error:", data);
+        if (data.message === "Auth failed" || data.message === "Authentication required") {
+          await this.logout();
+        }
+        this.emit("notification", { type: "error", message: data.message });
+        break;
       case "INVITE_CODE":
         this.emit("invite_ready", data.code);
         break;
