@@ -143,6 +143,9 @@ export const useChatLogic = () => {
     client.on("call_started", () =>
       setActiveCall((prev: any) => (prev ? { ...prev, status: "connected" } : null)),
     );
+    client.on("ice_status", (status) =>
+      setActiveCall((prev: any) => (prev ? { ...prev, iceStatus: status } : null)),
+    );
     client.on("call_ended", () => setActiveCall(null));
     client.on("message_status", ({ sid }) => {
       if (sid === activeChatRef.current) {

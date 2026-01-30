@@ -5,14 +5,14 @@ export interface ChatMessage {
   timestamp: number;
 
   type:
-    | "text"
-    | "image"
-    | "gif"
-    | "audio"
-    | "file"
-    | "video"
-    | "sticker"
-    | "live share port";
+  | "text"
+  | "image"
+  | "gif"
+  | "audio"
+  | "file"
+  | "video"
+  | "sticker"
+  | "live share port";
 
   text?: string;
 
@@ -32,11 +32,11 @@ export interface ChatMessage {
   thumbnail?: string;
   tempUrl?: string;
   mediaStatus?:
-    | "pending"
-    | "downloading"
-    | "downloaded"
-    | "error"
-    | "uploading";
+  | "pending"
+  | "downloading"
+  | "downloaded"
+  | "error"
+  | "uploading";
   mediaFilename?: string;
   mediaTotalSize?: number;
   mediaCurrentSize?: number;
@@ -56,4 +56,5 @@ export interface CallState {
   type: "audio" | "video" | null;
   remoteSid: string | null;
   isIncoming: boolean;
+  iceStatus?: string;
 }

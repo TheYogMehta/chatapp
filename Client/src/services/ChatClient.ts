@@ -381,6 +381,11 @@ export class ChatClient extends EventEmitter {
       }
     };
 
+    this.peerConnection.oniceconnectionstatechange = () => {
+      console.log("[ChatClient] ICE State:", this.peerConnection?.iceConnectionState);
+      this.emit("ice_status", this.peerConnection?.iceConnectionState);
+    };
+
     this.peerConnection.ontrack = (event) => {
       console.log("[ChatClient] Received remote track", event.track.kind);
       // Use the first stream if available, otherwise create a new one with the track

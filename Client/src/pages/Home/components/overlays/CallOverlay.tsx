@@ -1,5 +1,6 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { styles } from "../../Home.styles";
+import { User } from "lucide-react";
 
 interface CallOverlayProps {
   callState: any;
@@ -14,12 +15,12 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
   onReject,
   onHangup,
 }) => {
-  const [duration, setDuration] = React.useState(0);
+  const [duration, setDuration] = useState(0);
 
-  React.useEffect(() => {
+  useEffect(() => {
     let interval: any;
     if (callState?.status === "connected") {
-      interval = setInterval(() => setDuration(d => d + 1), 1000);
+      interval = setInterval(() => setDuration((d) => d + 1), 1000);
     } else {
       setDuration(0);
     }
@@ -27,8 +28,10 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
   }, [callState?.status]);
 
   const formatTime = (secs: number) => {
-    const m = Math.floor(secs / 60).toString().padStart(2, '0');
-    const s = (secs % 60).toString().padStart(2, '0');
+    const m = Math.floor(secs / 60)
+      .toString()
+      .padStart(2, "0");
+    const s = (secs % 60).toString().padStart(2, "0");
     return `${m}:${s}`;
   };
 
@@ -38,17 +41,24 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
     <div style={styles.modalOverlay}>
       <div style={{ ...styles.glassModal, maxWidth: "400px", padding: "40px" }}>
         <div style={styles.avatarLarge}>
-          {callState.remoteSid?.[0]?.toUpperCase() || "P"}
+          {callState.remoteSid?.[0]?.toUpperCase() || <User size={64} color="white" />}
         </div>
         <h2 style={{ marginTop: "20px" }}>
           Peer {callState.remoteSid?.slice(0, 6) || "Unknown"}
         </h2>
-        <p style={{ color: "#94a3b8", marginBottom: "30px" }}>
+        <div style={{ color: "#94a3b8", marginBottom: "30px" }}>
           {callState.status === "outgoing" && `${callState.type} calling...`}
           {callState.status === "ringing" &&
             `Incoming ${callState.type} call...`}
           {callState.status === "connected" && formatTime(duration)}
-        </p>
+
+          {/* Debug Info */}
+          {callState?.iceStatus && (
+            <span style={{ display: 'block', fontSize: '10px', marginTop: 10, color: '#aaa' }}>
+              Status: {callState.iceStatus}
+            </span>
+          )}
+        </div>
 
         <div style={{ display: "flex", gap: "20px", justifyContent: "center" }}>
           {callState.status === "ringing" ? (
