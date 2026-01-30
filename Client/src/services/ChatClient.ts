@@ -261,24 +261,7 @@ export class ChatClient extends EventEmitter {
 
     try {
       this.isCalling = true;
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      console.log("[ChatClient] startCall: Got local stream", stream.id);
-      
-      this.mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-      
-      this.mediaRecorder.ondataavailable = async (e) => {
-        if (e.data.size > 0) {
-          try {
-            const buffer = await e.data.arrayBuffer();
-            const encrypted = await this.encryptForSession(sid, buffer);
-            this.send({ t: "STREAM", sid, data: encrypted });
-          } catch (err) {
-            console.error("Encryption streaming error:", err);
-          }
-        }
-      };
-
-      this.mediaRecorder.start(100); // 100ms chunks
+      console.log("[ChatClient] startCall: Sending invite to", sid);
       
       const payload = await this.encryptForSession(
         sid,
@@ -299,26 +282,38 @@ export class ChatClient extends EventEmitter {
     }
   }
 
+  private async startStreaming(sid: string) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log("[ChatClient] startStreaming: Got local stream", stream.id);
+
+      this.mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+      this.mediaRecorder.ondataavailable = async (e) => {
+        if (e.data.size > 0) {
+          try {
+            const buffer = await e.data.arrayBuffer();
+            const encrypted = await this.encryptForSession(sid, buffer);
+            this.send({ t: "STREAM", sid, data: encrypted });
+          } catch (err) {
+            console.error("Encryption streaming error:", err);
+          }
+        }
+      };
+      this.mediaRecorder.start(100);
+    } catch (e) {
+      console.error("Error starting stream", e);
+      this.emit("notification", { type: "error", message: "Microphone error" });
+      this.endCall(sid);
+    }
+  }
+
   public async acceptCall(sid: string) {
     if (!this.sessions[sid]) return;
     if (this.isCalling) return;
 
     try {
       this.isCalling = true;
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      console.log("[ChatClient] acceptCall: Got local stream", stream.id);
-      
-      this.mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-      
-      this.mediaRecorder.ondataavailable = async (e) => {
-        if (e.data.size > 0) {
-            const buffer = await e.data.arrayBuffer();
-            const encrypted = await this.encryptForSession(sid, buffer);
-            this.send({ t: "STREAM", sid, data: encrypted });
-        }
-      };
-
-      this.mediaRecorder.start(100);
+      await this.startStreaming(sid);
 
       const payload = await this.encryptForSession(
         sid,
@@ -478,6 +473,9 @@ export class ChatClient extends EventEmitter {
 
         case "CALL_ACCEPT":
           console.log("[ChatClient] Received CALL_ACCEPT");
+          // picked up, start our mic
+          await this.startStreaming(sid);
+          
           if (!this.audioContext) {
              this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
              this.nextStartTime = this.audioContext.currentTime;
