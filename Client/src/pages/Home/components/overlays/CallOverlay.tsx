@@ -14,6 +14,24 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
   onReject,
   onHangup,
 }) => {
+  const [duration, setDuration] = React.useState(0);
+
+  React.useEffect(() => {
+    let interval: any;
+    if (callState?.status === "connected") {
+      interval = setInterval(() => setDuration(d => d + 1), 1000);
+    } else {
+      setDuration(0);
+    }
+    return () => clearInterval(interval);
+  }, [callState?.status]);
+
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60).toString().padStart(2, '0');
+    const s = (secs % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
+
   if (!callState || callState.status === "idle") return null;
 
   return (
@@ -29,7 +47,7 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
           {callState.status === "outgoing" && `${callState.type} calling...`}
           {callState.status === "ringing" &&
             `Incoming ${callState.type} call...`}
-          {callState.status === "connected" && "00:00"}
+          {callState.status === "connected" && formatTime(duration)}
         </p>
 
         <div style={{ display: "flex", gap: "20px", justifyContent: "center" }}>

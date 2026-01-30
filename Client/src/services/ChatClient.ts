@@ -363,12 +363,27 @@ export class ChatClient extends EventEmitter {
     };
 
     this.peerConnection.ontrack = (event) => {
-      console.log("[ChatClient] Received remote track");
-      this.remoteStream = event.streams[0];
-      const audio = new Audio();
-      audio.srcObject = this.remoteStream;
+      console.log("[ChatClient] Received remote track", event.track.kind);
+      // Use the first stream if available, otherwise create a new one with the track
+      const stream = event.streams[0] || new MediaStream([event.track]);
+      this.remoteStream = stream;
+
+      const audio = document.createElement("audio");
+      audio.srcObject = stream;
       audio.autoplay = true;
-      audio.play().catch(e => console.error("Auto-play failed", e));
+      // Attach to DOM (hidden) to prevent GC and ensure playback policies
+      audio.style.display = "none";
+      document.body.appendChild(audio);
+
+      audio.play().catch(e => {
+        console.error("[ChatClient] Audio auto-play failed", e);
+        // Retry on interaction if needed, but for now just log
+      });
+
+      // Cleanup on track end
+      event.track.onended = () => {
+        audio.remove();
+      };
     };
 
     this.peerConnection.onconnectionstatechange = () => {
