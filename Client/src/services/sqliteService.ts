@@ -1,8 +1,10 @@
 import { CapacitorSQLite } from "@capacitor-community/sqlite";
+import { Filesystem, Directory } from "@capacitor/filesystem";
 import { getKeyFromSecureStorage } from "./SafeStorage";
 
 let dbReady: Promise<void> | null = null;
-const DATABASE_NAME = "chatapp";
+let currentDbName = "chatapp";
+let currentKey: string | null = null;
 
 const SCHEMA = {
   me: {
@@ -76,28 +78,47 @@ const SCHEMA = {
 
 const tableOrder = ["me", "sessions", "messages", "media", "live_shares"];
 
+export const getCurrentDbName = () => currentDbName;
+
+export const switchDatabase = async (dbName: string, key?: string) => {
+  if (currentDbName === dbName && dbReady && currentKey === (key || null))
+    return;
+
+  console.log(`[sqlite] Switching database to: ${dbName}`);
+
+  dbReady = null;
+  currentDbName = dbName;
+  currentKey = key || null;
+  await dbInit();
+};
+
 export const dbInit = () => {
   if (dbReady) return dbReady;
   dbReady = (async () => {
-    const isEncrypted = await CapacitorSQLite.isSecretStored();
-    if (!isEncrypted.result) {
-      const key = await getKeyFromSecureStorage("MASTER_KEY");
-      if (key) await CapacitorSQLite.setEncryptionSecret({ passphrase: key });
+    const key = currentKey;
+    if (key) {
+      try {
+        await CapacitorSQLite.setEncryptionSecret({ passphrase: key });
+      } catch (e) {
+        console.warn("Failed to set encryption key/secret:", e);
+      }
     }
 
     try {
       await CapacitorSQLite.createConnection({
-        database: DATABASE_NAME,
+        database: currentDbName,
         encrypted: true,
         mode: "secret",
         version: 1,
       });
-    } catch {}
+    } catch (e) {
+      // Ignore
+    }
 
-    await CapacitorSQLite.open({ database: DATABASE_NAME });
+    await CapacitorSQLite.open({ database: currentDbName });
 
     await CapacitorSQLite.execute({
-      database: DATABASE_NAME,
+      database: currentDbName,
       statements: "PRAGMA foreign_keys = ON;",
     });
 
@@ -107,7 +128,7 @@ export const dbInit = () => {
 
       if (tableDef.indices.length > 0) {
         await CapacitorSQLite.execute({
-          database: DATABASE_NAME,
+          database: currentDbName,
           statements: tableDef.indices.join(";"),
         });
       }
@@ -118,7 +139,7 @@ export const dbInit = () => {
 
 async function syncTableSchema(tableName: string, targetColumnsRaw: string) {
   const info = await CapacitorSQLite.query({
-    database: DATABASE_NAME,
+    database: currentDbName,
     statement: `PRAGMA table_info(${tableName});`,
     values: [],
   });
@@ -128,7 +149,7 @@ async function syncTableSchema(tableName: string, targetColumnsRaw: string) {
 
   if (currentColumns.length === 0) {
     await CapacitorSQLite.execute({
-      database: DATABASE_NAME,
+      database: currentDbName,
       statements: `CREATE TABLE ${tableName}(${targetColumnsStr});`,
     });
     return;
@@ -159,7 +180,7 @@ async function syncTableSchema(tableName: string, targetColumnsRaw: string) {
     for (const colName of addedColumns) {
       const definition = targetDefinitions.find((d) => d.startsWith(colName));
       await CapacitorSQLite.execute({
-        database: DATABASE_NAME,
+        database: currentDbName,
         statements: `ALTER TABLE ${tableName} ADD COLUMN ${definition};`,
       });
     }
@@ -187,7 +208,7 @@ async function syncTableSchema(tableName: string, targetColumnsRaw: string) {
     ];
 
     await CapacitorSQLite.execute({
-      database: DATABASE_NAME,
+      database: currentDbName,
       statements: statements.join("\n"),
     });
   }
@@ -196,7 +217,7 @@ async function syncTableSchema(tableName: string, targetColumnsRaw: string) {
 export const queryDB = async (sql: string, values: any[] = []) => {
   await dbInit();
   const res = await CapacitorSQLite.query({
-    database: DATABASE_NAME,
+    database: currentDbName,
     statement: sql,
     values: values,
   });
@@ -206,8 +227,54 @@ export const queryDB = async (sql: string, values: any[] = []) => {
 export const executeDB = async (sql: string, values: any[] = []) => {
   await dbInit();
   await CapacitorSQLite.run({
-    database: DATABASE_NAME,
+    database: currentDbName,
     statement: sql,
     values: values,
   });
+};
+
+export const deleteDatabase = async () => {
+  try {
+    try {
+      await CapacitorSQLite.closeConnection({
+        database: currentDbName,
+        readonly: false,
+      });
+    } catch (ignore) {
+      // ignore
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const targets = [
+      `${currentDbName}SQLite.db`,
+      `${currentDbName}SQLite.db-journal`,
+      `${currentDbName}SQLite.db-wal`,
+      `${currentDbName}SQLite.db-shm`,
+    ];
+
+    let filesDeleted = 0;
+    for (const file of targets) {
+      try {
+        await Filesystem.deleteFile({
+          path: file,
+          directory: Directory.Data,
+        });
+        filesDeleted++;
+        console.log(`[sqlite] Deleted file via FS: ${file}`);
+      } catch (err) {
+        // Ignored
+      }
+    }
+
+    if (filesDeleted > 0) {
+      dbReady = null;
+      console.log(`[sqlite] Deleted database files via filesystem.`);
+      return;
+    } else {
+      console.error(`[sqlite] Failed to delete database ${currentDbName}`);
+    }
+  } catch (e) {
+    console.error(`[sqlite] Failed to delete database ${currentDbName}`, e);
+  }
 };

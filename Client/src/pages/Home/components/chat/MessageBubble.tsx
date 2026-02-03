@@ -608,9 +608,20 @@ export const MessageBubble = ({ msg }: { msg: ChatMessage }) => {
           transformOrigin: isMe ? "bottom right" : "bottom left",
         }}
       >
-        {msg.type === "live share port" ? (
+        {msg.type === "system" ? (
+          <div
+            style={{
+              fontSize: "0.85rem",
+              color: "rgba(255, 255, 255, 0.6)",
+              textAlign: "center",
+              fontStyle: "italic",
+              padding: "4px 0",
+            }}
+          >
+            {msg.text}
+          </div>
+        ) : msg.type === "live share port" ? (
           <div style={{ padding: "8px" }}>
-            {/* Live Share Port UI (Unchanged) */}
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
               <span style={{ fontSize: "1.5rem" }}>🌐</span>
               <div>

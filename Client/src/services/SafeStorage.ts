@@ -9,17 +9,22 @@ export async function Platform(): Promise<string> {
   return info.platform;
 }
 
-export async function hashPin(pin: string): Promise<string> {
-  const msgUint8 = new TextEncoder().encode(pin);
+export async function hashIdentifier(identifier: string): Promise<string> {
+  const msgUint8 = new TextEncoder().encode(identifier);
   const hashBuffer = await crypto.subtle.digest("SHA-256", msgUint8);
   return Array.from(new Uint8Array(hashBuffer))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
 
+export async function hashPin(pin: string): Promise<string> {
+  return hashIdentifier(pin);
+}
+
 async function getCryptoKey(): Promise<CryptoKey> {
   if (cachedKey) return cachedKey;
   const id = (await Device.getId()).identifier;
+  console.log("[SafeStorage] Using Device ID for Encryption:", id);
   const rawKey = new TextEncoder().encode(id).slice(0, 32);
   cachedKey = await crypto.subtle.importKey(
     "raw",
@@ -42,7 +47,13 @@ async function encrypt(value: string): Promise<string> {
   const combined = new Uint8Array(iv.length + encrypted.byteLength);
   combined.set(iv);
   combined.set(new Uint8Array(encrypted), iv.length);
-  return btoa(String.fromCharCode(...combined));
+
+  const chunks = [];
+  const chunkSize = 32768;
+  for (let i = 0; i < combined.length; i += chunkSize) {
+    chunks.push(String.fromCharCode(...combined.slice(i, i + chunkSize)));
+  }
+  return btoa(chunks.join(""));
 }
 
 async function decrypt(payload: string): Promise<string | null> {
@@ -55,7 +66,8 @@ async function decrypt(payload: string): Promise<string | null> {
       raw.slice(12),
     );
     return new TextDecoder().decode(decrypted);
-  } catch {
+  } catch (e) {
+    console.error("[SafeStorage] Decryption failed:", e);
     return null;
   }
 }
@@ -98,113 +110,14 @@ export async function getKeyFromSecureStorage(
   }
 }
 
-export async function AppLock(
-  hashPass: string,
-  oldHashpass: string | null,
-): Promise<any> {
+export async function setActiveUser(identifier: string | null): Promise<void> {
   const p = await Platform();
-  if (hashPass !== null) hashPass = await hashPin(hashPass);
-  if (oldHashpass !== null) oldHashpass = await hashPin(oldHashpass);
-  if (p === "android") {
-    const stored = await getKeyFromSecureStorage("APP_LOCK", true);
-    if (
-      !stored ||
-      isUnlockedAndroid ||
-      (oldHashpass && oldHashpass === stored)
-    ) {
-      await setKeyFromSecureStorage("APP_LOCK", hashPass, true);
-      await setKeyFromSecureStorage("APP_LOCK_ENABLED", "true", true);
-      isUnlockedAndroid = true;
-      return { success: true };
-    }
-    return { success: false };
-  }
-  return await (window as any).SafeStorage.AppLock(hashPass, oldHashpass);
-}
-
-export async function AppLockVerify(PASS: string | null): Promise<any> {
-  const p = await Platform();
-  if (PASS !== null) PASS = await hashPin(PASS);
-  if (p !== "android")
-    return await (window as any).SafeStorage.verifylock(PASS);
-
-  if (isUnlockedAndroid)
-    return {
-      success: true,
-    };
-  const now = Date.now();
-
-  const lockoutUntil = Number(
-    (await getKeyFromSecureStorage("LOCKOUT_UNTIL", true)) || 0,
-  );
-  if (now < lockoutUntil && PASS !== null)
-    return {
-      success: false,
-      isLockedOut: true,
-      remainingMs: lockoutUntil - now,
-    };
-
-  const MasterKey = await getKeyFromSecureStorage("MASTER_KEY", true);
-  if (!MasterKey) {
-    isUnlockedAndroid = true;
-    return { success: true, needsMasterKey: true };
+  let hash: string | null = null;
+  if (identifier) {
+    hash = await hashIdentifier(identifier);
   }
 
-  const storedHash = await getKeyFromSecureStorage("APP_LOCK", true);
-  if (!storedHash || storedHash === "null") {
-    isUnlockedAndroid = true;
-    return { success: true, needsPin: true };
-  }
-
-  const isEnabled = await getKeyFromSecureStorage("APP_LOCK_ENABLED", true);
-  if (isEnabled !== "true") {
-    isUnlockedAndroid = true;
-    return { success: true };
-  }
-
-  if (PASS === storedHash) {
-    isUnlockedAndroid = true;
-    await setKeyFromSecureStorage("FAILED_ATTEMPTS", "0", true);
-    return { success: true };
-  } else if (PASS !== null) {
-    let attempts = Number(
-      (await getKeyFromSecureStorage("FAILED_ATTEMPTS", true)) || 0,
-    );
-    attempts += 1;
-    await setKeyFromSecureStorage("FAILED_ATTEMPTS", String(attempts), true);
-    let cd =
-      attempts >= 5
-        ? 10800000
-        : attempts >= 4
-        ? 300000
-        : attempts >= 3
-        ? 30000
-        : 0;
-    if (cd > 0) {
-      await setKeyFromSecureStorage("LOCKOUT_UNTIL", String(now + cd), true);
-    }
-
-    return { success: false, attempts, isLockedOut: cd > 0, remainingMs: cd };
-  }
-  return { success: false };
-}
-
-export async function ToggleAppLock(enabled: boolean) {
-  const p = await Platform();
-  const val = enabled ? "true" : "false";
-  if (p === "android") {
-    if (!isUnlockedAndroid) return;
-    await setKeyFromSecureStorage("APP_LOCK_ENABLED", val);
-  } else {
-    await (window as any).SafeStorage.ToggleAppLock(enabled);
-  }
-}
-
-export async function initlock() {
-  const p = await Platform();
-  if (p === "android") {
-    isUnlockedAndroid = false;
-  } else {
-    return await (window as any).SafeStorage.initlock();
+  if (p !== "android") {
+    await (window as any).SafeStorage.SetActiveUser(hash);
   }
 }

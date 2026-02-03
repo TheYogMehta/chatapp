@@ -46,7 +46,7 @@ export const useChatLogic = () => {
 
   const loadSessions = async () => {
     const rows = await queryDB(`
-      SELECT s.sid,
+      SELECT s.sid, s.alias_name, s.alias_avatar, s.peer_name, s.peer_avatar, s.peer_email,
              (SELECT text FROM messages WHERE sid = s.sid ORDER BY timestamp DESC LIMIT 1) as lastMsg,
              (SELECT type FROM messages WHERE sid = s.sid ORDER BY timestamp DESC LIMIT 1) as lastMsgType,
              (SELECT timestamp FROM messages WHERE sid = s.sid ORDER BY timestamp DESC LIMIT 1) as lastTs,
@@ -57,6 +57,11 @@ export const useChatLogic = () => {
 
     const formatted: SessionData[] = rows.map((r: any) => ({
       sid: r.sid,
+      alias_name: r.alias_name,
+      alias_avatar: r.alias_avatar,
+      peer_name: r.peer_name,
+      peer_avatar: r.peer_avatar,
+      peerEmail: r.peer_email,
       lastMsg: r.lastMsg || "",
       lastMsgType: r.lastMsgType || "text",
       lastTs: r.lastTs || 0,
@@ -111,10 +116,12 @@ export const useChatLogic = () => {
       }
     };
 
-    const onMsg = (msg: ChatMessage) => {
+    const onMsg = async (msg: ChatMessage) => {
       if (msg.sid === activeChatRef.current) {
         setMessages((prev) => [...prev, msg]);
-        executeDB("UPDATE messages SET is_read = 1 WHERE id = ?", [msg.id]);
+        await executeDB("UPDATE messages SET is_read = 1 WHERE id = ?", [
+          msg.id,
+        ]);
       }
       loadSessions();
     };
@@ -182,40 +189,44 @@ export const useChatLogic = () => {
       setActiveCall(null);
       const sid = typeof data === "string" ? data : data.sid;
       const duration = typeof data === "object" ? data.duration : 0;
+      const connected = typeof data === "object" ? !!data.connected : false;
 
-      if (duration > 0) {
+      let text = "";
+      if (connected) {
         const min = Math.floor(duration / 60000);
         const sec = Math.floor((duration % 60000) / 1000);
         const durationStr = `${min}m ${sec}s`;
+        text = `Call ended • ${durationStr}`;
+      } else {
+        text = "Missed Call";
+      }
 
-        const text = `Call ended • ${durationStr}`;
-        const id = crypto.randomUUID();
-        const timestamp = Date.now();
+      const id = crypto.randomUUID();
+      const timestamp = Date.now();
 
-        try {
-          await executeDB(
-            "INSERT INTO messages (id, sid, sender, text, type, timestamp, status) VALUES (?, ?, 'system', ?, 'system', ?, 1)",
-            [id, sid, text, timestamp],
-          );
+      try {
+        await executeDB(
+          "INSERT INTO messages (id, sid, sender, text, type, timestamp, status) VALUES (?, ?, 'system', ?, 'system', ?, 1)",
+          [id, sid, text, timestamp],
+        );
 
-          if (activeChatRef.current === sid) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                id,
-                sid,
-                text,
-                sender: "system",
-                type: "system",
-                timestamp,
-                status: 1,
-              },
-            ]);
-          }
-          loadSessions();
-        } catch (e) {
-          console.error("Failed to log call end:", e);
+        if (activeChatRef.current === sid) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id,
+              sid,
+              text,
+              sender: "system",
+              type: "system",
+              timestamp,
+              status: 1,
+            },
+          ]);
         }
+        loadSessions();
+      } catch (e) {
+        console.error("Failed to log call end:", e);
       }
     });
     client.on("message_status", ({ sid }) => {
@@ -342,6 +353,17 @@ export const useChatLogic = () => {
       rejectCall: () => ChatClient.endCall(activeCall.sid),
       endCall: () => ChatClient.endCall(activeCall.sid),
       clearNotification: () => setNotification(null),
+      handleSetAlias: async (sid: string, name: string) => {
+        try {
+          await executeDB("UPDATE sessions SET alias_name = ? WHERE sid = ?", [
+            name,
+            sid,
+          ]);
+          loadSessions();
+        } catch (e) {
+          console.error("Failed to set alias", e);
+        }
+      },
     },
   };
 };

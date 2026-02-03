@@ -1,8 +1,10 @@
 import { EventEmitter } from "events";
-import { queryDB, executeDB, dbInit } from "./sqliteService";
+import { queryDB, executeDB, dbInit, switchDatabase } from "./sqliteService";
+import { AccountService } from "./AccountService";
 import {
   setKeyFromSecureStorage,
   getKeyFromSecureStorage,
+  setActiveUser,
 } from "./SafeStorage";
 import socket from "./SocketManager";
 import { generateThumbnail } from "../utils/imageUtils";
@@ -30,6 +32,7 @@ export class ChatClient extends EventEmitter {
   private audioContext: AudioContext | null = null;
   private nextStartTime: number = 0;
   private isCalling: boolean = false;
+  private isCallConnected: boolean = false;
   private remoteAudio: HTMLAudioElement | null = null;
   private mediaSource: MediaSource | null = null;
   private sourceBuffer: SourceBuffer | null = null;
@@ -47,16 +50,6 @@ export class ChatClient extends EventEmitter {
   }
 
   async init() {
-    await dbInit();
-    await this.loadIdentity();
-    await this.loadSessions();
-
-    const storedToken = await getKeyFromSecureStorage("auth_token");
-    if (storedToken) {
-      this.authToken = storedToken;
-      console.log("[Client] Restored session token");
-    }
-
     this.emit("session_updated");
 
     socket.on("WS_CONNECTED", () => {
@@ -67,18 +60,10 @@ export class ChatClient extends EventEmitter {
       Object.keys(this.sessions).forEach((sid) =>
         this.send({ t: "REATTACH", sid }),
       );
+      this.broadcastProfileUpdate();
     });
 
     socket.on("message", (frame: ServerFrame) => this.handleFrame(frame));
-
-    await socket.connect("ws://162.248.100.69:9000");
-
-    if (socket.isConnected()) {
-      this.emit("status", true);
-      Object.keys(this.sessions).forEach((sid) =>
-        this.send({ t: "REATTACH", sid }),
-      );
-    }
   }
 
   public async syncPendingMessages() {
@@ -107,8 +92,11 @@ export class ChatClient extends EventEmitter {
 
   public async login(token: string) {
     this.authToken = token;
-    await setKeyFromSecureStorage("auth_token", token);
-    this.send({ t: "AUTH", data: { token } });
+    if (!socket.isConnected()) {
+      await socket.connect("ws://162.248.100.69:9000");
+    } else {
+      this.send({ t: "AUTH", data: { token } });
+    }
   }
 
   // --- Actions ---
@@ -147,6 +135,43 @@ export class ChatClient extends EventEmitter {
       );
     } catch (e) {
       console.error("[Client] Failed to save sent message:", e);
+    }
+  }
+
+  public async broadcastProfileUpdate() {
+    try {
+      const rows = await queryDB(
+        "SELECT name_version, avatar_version FROM me WHERE id = 1",
+      );
+      if (!rows.length) return;
+      const { name_version, avatar_version } = rows[0];
+
+      console.log(
+        `[ChatClient] Broadcasting profile update: v${name_version}/${avatar_version}`,
+      );
+
+      const sids = Object.keys(this.sessions);
+      for (const sid of sids) {
+        if (this.sessions[sid].online) {
+          try {
+            const payload = await this.encryptForSession(
+              sid,
+              JSON.stringify({
+                t: "PROFILE_VERSION",
+                data: { name_version, avatar_version },
+              }),
+            );
+            this.send({ t: "MSG", sid, data: { payload } });
+          } catch (e) {
+            console.error(
+              `[ChatClient] Failed to send profile update to ${sid}`,
+              e,
+            );
+          }
+        }
+      }
+    } catch (e) {
+      console.error("[ChatClient] Failed to broadcast profile update", e);
     }
   }
 
@@ -344,6 +369,7 @@ export class ChatClient extends EventEmitter {
       this.send({ t: "MSG", sid, data: { payload } });
 
       this.callStartTime = Date.now();
+      this.isCallConnected = true;
       this.emit("call_started", { sid, status: "connected", remoteSid: sid });
 
       this.setupAudioPlayback();
@@ -365,11 +391,12 @@ export class ChatClient extends EventEmitter {
     this.send({ t: "MSG", sid, data: { payload } });
     this.cleanupCall();
     const duration = Date.now() - this.callStartTime;
-    this.emit("call_ended", { sid, duration });
+    this.emit("call_ended", { sid, duration, connected: this.isCallConnected });
   }
 
   private cleanupCall() {
     this.isCalling = false;
+    this.isCallConnected = false;
     if (this.mediaRecorder) {
       if (this.mediaRecorder.state !== "inactive") {
         this.mediaRecorder.stream.getTracks().forEach((t) => t.stop());
@@ -560,7 +587,7 @@ export class ChatClient extends EventEmitter {
             message: "User is busy on another call.",
           });
           this.cleanupCall();
-          this.emit("call_ended", { sid, duration: 0 });
+          this.emit("call_ended", { sid, duration: 0, connected: false });
           break;
 
         case "CALL_ACCEPT":
@@ -568,6 +595,7 @@ export class ChatClient extends EventEmitter {
           await this.startStreaming(sid);
 
           this.setupAudioPlayback();
+          this.isCallConnected = true;
 
           this.emit("call_started", {
             sid,
@@ -580,7 +608,114 @@ export class ChatClient extends EventEmitter {
           console.log("[ChatClient] Received CALL_END");
           this.cleanupCall();
           const duration = Date.now() - this.callStartTime;
-          this.emit("call_ended", { sid, duration });
+          this.emit("call_ended", {
+            sid,
+            duration,
+            connected: this.isCallConnected,
+          });
+          break;
+
+        case "PROFILE_VERSION":
+          try {
+            const { name_version, avatar_version } = data;
+            const peerRows = await queryDB(
+              "SELECT peer_name_ver, peer_avatar_ver FROM sessions WHERE sid = ?",
+              [sid],
+            );
+            if (peerRows.length) {
+              const current = peerRows[0];
+              if (
+                name_version > (current.peer_name_ver || 0) ||
+                avatar_version > (current.peer_avatar_ver || 0)
+              ) {
+                console.log(
+                  `[ChatClient] Peer ${sid} has newer profile (v${name_version}/${avatar_version}), requesting update...`,
+                );
+                const reqPayload = await this.encryptForSession(
+                  sid,
+                  JSON.stringify({ t: "GET_PROFILE" }),
+                );
+                this.send({ t: "MSG", sid, data: { payload: reqPayload } });
+              }
+            }
+          } catch (e) {
+            console.error("Error handling PROFILE_VERSION", e);
+          }
+          break;
+
+        case "GET_PROFILE":
+          try {
+            const meRows = await queryDB(
+              "SELECT public_name, public_avatar, name_version, avatar_version FROM me WHERE id = 1",
+            );
+            if (meRows.length) {
+              const me = meRows[0];
+              let avatarBase64 = null;
+              if (me.public_avatar) {
+                if (!me.public_avatar.startsWith("data:")) {
+                  try {
+                    avatarBase64 = await StorageService.readChunk(
+                      me.public_avatar,
+                      0,
+                    ); 
+                    const src = await StorageService.getFileSrc(
+                      me.public_avatar,
+                    );
+                    avatarBase64 = src;
+                  } catch (e) {
+                    console.warn("Failed to load avatar file", e);
+                  }
+                } else {
+                  avatarBase64 = me.public_avatar;
+                }
+              }
+
+              const respPayload = await this.encryptForSession(
+                sid,
+                JSON.stringify({
+                  t: "PROFILE_DATA",
+                  data: {
+                    name: me.public_name,
+                    avatar: avatarBase64,
+                    name_version: me.name_version,
+                    avatar_version: me.avatar_version,
+                  },
+                }),
+              );
+              this.send({ t: "MSG", sid, data: { payload: respPayload } });
+            }
+          } catch (e) {
+            console.error("Error handling GET_PROFILE", e);
+          }
+          break;
+
+        case "PROFILE_DATA":
+          try {
+            const { name, avatar, name_version, avatar_version } = data;
+            console.log(
+              `[ChatClient] Received PROFILE_DATA from ${sid}: ${name}`,
+            );
+
+            let avatarFile = null;
+            if (avatar) {
+              let base64 = avatar;
+              if (avatar.startsWith("data:")) {
+                base64 = avatar.split(",")[1];
+              }
+              avatarFile = await StorageService.saveRawFile(
+                base64,
+                `peer_avatar_${sid}_${Date.now()}.txt`,
+              );
+            }
+
+            await executeDB(
+              "UPDATE sessions SET peer_name = ?, peer_avatar = ?, peer_name_ver = ?, peer_avatar_ver = ? WHERE sid = ?",
+              [name, avatarFile, name_version, avatar_version, sid],
+            );
+            this.emit("session_updated");
+          } catch (e) {
+            console.error("Error handling PROFILE_DATA", e);
+          }
           break;
       }
     } catch (e) {
@@ -717,10 +852,49 @@ export class ChatClient extends EventEmitter {
   }
 
   public async logout() {
+    if (this.userEmail) {
+      const key = await AccountService.getStorageKey(
+        this.userEmail,
+        "auth_token",
+      );
+      await setKeyFromSecureStorage(key, "");
+    }
     this.authToken = null;
     this.userEmail = null;
-    await setKeyFromSecureStorage("auth_token", "");
     this.emit("auth_error");
+  }
+
+  public async switchAccount(email: string) {
+    const accounts = await AccountService.getAccounts();
+    const account = accounts.find((a) => a.email === email);
+    if (!account) throw new Error("Account not found");
+
+    this.authToken = account.token;
+    await setKeyFromSecureStorage(
+      await AccountService.getStorageKey(email, "auth_token"),
+      account.token,
+    );
+
+    const key = await getKeyFromSecureStorage(
+      await AccountService.getStorageKey(email, "MASTER_KEY"),
+    );
+    const dbName = await AccountService.getDbName(email);
+    await switchDatabase(dbName, key || undefined);
+
+    this.sessions = {};
+    this.userEmail = email;
+    await setActiveUser(email);
+    await this.loadSessions();
+    await this.loadIdentity();
+
+    if (!socket.isConnected()) {
+      await socket.connect("ws://162.248.100.69:9000");
+    } else {
+      this.send({ t: "AUTH", data: { token: this.authToken } });
+    }
+
+    this.emit("auth_success", email);
+    this.emit("session_updated");
   }
 
   private async handleFrame(frame: ServerFrame) {
@@ -744,8 +918,27 @@ export class ChatClient extends EventEmitter {
         this.userEmail = data.email;
         if (data.token) {
           this.authToken = data.token;
-          await setKeyFromSecureStorage("auth_token", data.token);
+          const tokenKey = await AccountService.getStorageKey(
+            data.email,
+            "auth_token",
+          );
+          await setKeyFromSecureStorage(tokenKey, data.token);
           console.log("[Client] Session token saved/refreshed");
+
+          await AccountService.addAccount(data.email, data.token);
+          await setActiveUser(data.email);
+
+          const key = await getKeyFromSecureStorage(
+            await AccountService.getStorageKey(data.email, "MASTER_KEY"),
+          );
+          const dbName = await AccountService.getDbName(data.email);
+          await switchDatabase(dbName, key || undefined);
+
+          this.sessions = {};
+          await this.loadSessions();
+          await this.loadIdentity();
+
+          this.emit("session_updated");
         }
         this.emit("auth_success", data.email);
         break;
@@ -809,8 +1002,18 @@ export class ChatClient extends EventEmitter {
   }
 
   private async loadIdentity() {
-    const privJWK = await getKeyFromSecureStorage("identity_priv");
-    const pubJWK = await getKeyFromSecureStorage("identity_pub");
+    if (!this.userEmail) return;
+    const privKeyName = await AccountService.getStorageKey(
+      this.userEmail,
+      "identity_priv",
+    );
+    const pubKeyName = await AccountService.getStorageKey(
+      this.userEmail,
+      "identity_pub",
+    );
+
+    const privJWK = await getKeyFromSecureStorage(privKeyName);
+    const pubJWK = await getKeyFromSecureStorage(pubKeyName);
     if (privJWK && pubJWK) {
       this.identityKeyPair = {
         privateKey: await crypto.subtle.importKey(
@@ -835,13 +1038,13 @@ export class ChatClient extends EventEmitter {
         ["deriveKey"],
       );
       await setKeyFromSecureStorage(
-        "identity_priv",
+        privKeyName,
         JSON.stringify(
           await crypto.subtle.exportKey("jwk", this.identityKeyPair.privateKey),
         ),
       );
       await setKeyFromSecureStorage(
-        "identity_pub",
+        pubKeyName,
         JSON.stringify(
           await crypto.subtle.exportKey("jwk", this.identityKeyPair.publicKey),
         ),

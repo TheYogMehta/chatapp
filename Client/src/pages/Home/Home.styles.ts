@@ -21,6 +21,7 @@ export const styles: { [key: string]: React.CSSProperties } = {
   },
   sidebarHeader: {
     padding: "24px",
+    paddingTop: "max(24px, env(safe-area-inset-top))",
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
@@ -68,10 +69,14 @@ export const styles: { [key: string]: React.CSSProperties } = {
     justifyContent: "center",
     fontWeight: "bold",
     marginRight: "12px",
-    color: "#818cf8", // Keep specific accent or map to primaryLight
+    color: "#818cf8",
   },
   sessionInfo: { flex: 1 },
-  sessionName: { fontSize: "0.9rem", fontWeight: 600, color: colors.text.primary },
+  sessionName: {
+    fontSize: "0.9rem",
+    fontWeight: 600,
+    color: colors.text.primary,
+  },
   sidebarFooter: { padding: "16px", borderTop: `1px solid ${colors.border}` },
   addBtn: {
     width: "100%",
@@ -99,14 +104,14 @@ export const styles: { [key: string]: React.CSSProperties } = {
     position: "sticky",
     top: 0,
     zIndex: 100,
-    paddingTop: "env(safe-area-inset-top, 16px)",
+    paddingTop: "max(16px, env(safe-area-inset-top))",
     paddingLeft: 24,
     paddingRight: 24,
     minHeight: 64,
     display: "flex",
     alignItems: "center",
     borderBottom: `1px solid ${colors.border}`,
-    backgroundColor: "rgba(5, 5, 5, 0.8)", // Semi-transparent background
+    backgroundColor: "rgba(5, 5, 5, 0.8)",
     backdropFilter: "blur(12px)",
   },
   headerTitle: {
@@ -195,7 +200,11 @@ export const styles: { [key: string]: React.CSSProperties } = {
     border: `1px solid ${colors.border}`,
     textAlign: "center" as "center",
   },
-  setupSub: { color: colors.text.secondary, fontSize: "0.85rem", marginBottom: "24px" },
+  setupSub: {
+    color: colors.text.secondary,
+    fontSize: "0.85rem",
+    marginBottom: "24px",
+  },
   primaryBtn: {
     width: "100%",
     padding: "14px",

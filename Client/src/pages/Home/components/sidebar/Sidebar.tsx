@@ -11,6 +11,8 @@ export const Sidebar = ({
   isMobile,
   onClose,
   onLogoClick,
+  onSettings,
+  onRename,
 }: {
   sessions: SessionData[];
   activeChat: string | null;
@@ -20,6 +22,8 @@ export const Sidebar = ({
   isMobile: boolean;
   onClose: () => void;
   onLogoClick: () => void;
+  onSettings: () => void;
+  onRename: (sid: string, currentName: string) => void;
 }) => (
   <>
     {isOpen && isMobile && (
@@ -55,6 +59,7 @@ export const Sidebar = ({
               data={session}
               isActive={activeChat === session.sid}
               onSelect={onSelect}
+              onRename={onRename}
             />
           ))
         )}
@@ -62,7 +67,13 @@ export const Sidebar = ({
 
       <div style={styles.sidebarFooter}>
         <button onClick={onAddPeer} style={styles.addBtn}>
-          <span>+</span> Connect via Email
+          <span>+</span> Connect
+        </button>
+        <button
+          onClick={onSettings}
+          style={{ ...styles.addBtn, marginTop: "10px", background: "#333" }}
+        >
+          <span>⚙</span> Settings
         </button>
       </div>
     </nav>

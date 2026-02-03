@@ -13,6 +13,7 @@ dependencies {
     implementation project(':capacitor-community-sqlite')
     implementation project(':capacitor-community-video-recorder')
     implementation project(':capacitor-app')
+    implementation project(':capacitor-clipboard')
     implementation project(':capacitor-device')
     implementation project(':capacitor-filesystem')
     implementation project(':capacitor-haptics')

@@ -15,7 +15,8 @@ import {
   Phone,
   ArrowLeft,
 } from "lucide-react";
-import { ChatMessage } from "../../types";
+import { ChatMessage, SessionData } from "../../types";
+import UserAvatar from "../../../../components/UserAvatar";
 
 interface ChatWindowProps {
   messages: ChatMessage[];
@@ -23,6 +24,7 @@ interface ChatWindowProps {
   setInput: (val: string) => void;
   onSend: () => void;
   activeChat: string | null;
+  session?: SessionData;
   onFileSelect: (file: File) => void;
   onStartCall: (mode: "Audio" | "Video") => void;
   peerOnline?: boolean;
@@ -35,6 +37,7 @@ export const ChatWindow = ({
   setInput,
   onSend,
   activeChat,
+  session,
   onFileSelect,
   onStartCall,
   peerOnline,
@@ -48,25 +51,13 @@ export const ChatWindow = ({
   const [port, setPort] = useState("");
   const [isRecording, setIsRecording] = useState(false);
 
-  const getAvatarColor = (name: string) => {
-    const colors = [
-      "#ef4444",
-      "#f97316",
-      "#f59e0b",
-      "#10b981",
-      "#3b82f6",
-      "#6366f1",
-      "#8b5cf6",
-      "#ec4899",
-    ];
-    let hash = 0;
-    for (let i = 0; i < name.length; i++)
-      hash = name.charCodeAt(i) + ((hash << 5) - hash);
-    return colors[Math.abs(hash) % colors.length];
-  };
-
-  const avatarColor = activeChat ? getAvatarColor(activeChat) : "#6366f1";
-  const initial = activeChat ? activeChat.charAt(0).toUpperCase() : "?";
+  const headerName =
+    session?.alias_name ||
+    session?.peer_name ||
+    session?.peerEmail ||
+    activeChat ||
+    "Chat";
+  const avatarToUse = session?.alias_avatar || session?.peer_avatar;
 
   useEffect(() => {
     if (scrollRef.current)
@@ -193,7 +184,7 @@ export const ChatWindow = ({
           display: "flex",
           alignItems: "center",
           padding: "12px 16px",
-          paddingTop: "max(12px, env(safe-area-inset-top))",
+          paddingTop: "max(16px, env(safe-area-inset-top))",
           borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
           backgroundColor: "#161b22",
           background:
@@ -233,25 +224,15 @@ export const ChatWindow = ({
           </button>
         )}
 
-        <div
+        <UserAvatar
+          avatarUrl={avatarToUse}
+          name={headerName}
+          size={42}
           style={{
-            width: "42px",
-            height: "42px",
-            borderRadius: "50%",
-            backgroundColor: avatarColor,
-            flexShrink: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: "18px",
-            fontWeight: "bold",
-            color: "white",
             marginRight: "12px",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
           }}
-        >
-          {initial}
-        </div>
+        />
         <div style={{ flex: 1, minWidth: 0, marginRight: "8px" }}>
           <div
             style={{
@@ -264,7 +245,7 @@ export const ChatWindow = ({
               letterSpacing: "0.3px",
             }}
           >
-            {activeChat || "Chat"}
+            {headerName}
           </div>
           <div
             style={{

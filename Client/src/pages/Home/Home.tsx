@@ -7,9 +7,15 @@ import { RequestModal } from "./components/overlays/RequestModal";
 import { CallOverlay } from "./components/overlays/CallOverlay";
 import { WelcomeView } from "./components/views/WelcomeView";
 import { NotificationToast } from "./components/overlays/NotificationToast";
+import { SettingsOverlay } from "./components/overlays/SettingsOverlay";
+import { ProfileSetup } from "./components/overlays/ProfileSetup";
+import { AppLockScreen } from "./components/overlays/AppLockScreen";
 import LoadingScreen from "../LoadingScreen";
+import { AccountService } from "../../services/AccountService";
+import ChatClient from "../../services/ChatClient";
 import { Login } from "../Login";
 import { styles } from "./Home.styles";
+import { RenameModal } from "./components/overlays/RenameModal";
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -43,6 +49,46 @@ const Home = () => {
   const [isMobile, setIsMobile] = useState(
     typeof window !== "undefined" ? window.innerWidth < 768 : false,
   );
+  const [showSettings, setShowSettings] = useState(false);
+  const [showProfileSetup, setShowProfileSetup] = useState(true);
+  const [isLocked, setIsLocked] = useState(true);
+  const [storedAccounts, setStoredAccounts] = useState<any[]>([]);
+  const [renameTarget, setRenameTarget] = useState<{
+    sid: string;
+    name: string;
+  } | null>(null);
+
+  useEffect(() => {
+    checkInitialState();
+  }, []);
+
+  const checkInitialState = async () => {
+    try {
+      const accs = await AccountService.getAccounts();
+      console.log("[Home] Loaded accounts from storage:", accs);
+      setStoredAccounts(accs);
+
+      if (accs.length === 0) {
+        console.log("[Home] No accounts found, setting isLocked=false");
+        setIsLocked(false);
+      } else {
+        console.log("[Home] Accounts found, setting isLocked=true");
+        setIsLocked(true);
+      }
+    } catch (e) {
+      console.error("[Home] Failed to load initial state:", e);
+      setIsLocked(false);
+    }
+  };
+
+  const handleUnlock = async (email: string) => {
+    try {
+      await ChatClient.switchAccount(email);
+      setIsLocked(false);
+    } catch (e) {
+      console.error("Unlock failed", e);
+    }
+  };
 
   useEffect(() => {
     console.log("[Home] Render state:", {
@@ -50,6 +96,38 @@ const Home = () => {
       view: state.view,
     });
   }, [state.userEmail, state.view]);
+
+  const [touchStart, setTouchStart] = useState<number | null>(null);
+  const [touchEnd, setTouchEnd] = useState<number | null>(null);
+
+  const minSwipeDistance = 50;
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    setTouchEnd(null);
+    setTouchStart(e.targetTouches[0].clientX);
+  };
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    setTouchEnd(e.targetTouches[0].clientX);
+  };
+
+  const onTouchEnd = () => {
+    if (!touchStart || !touchEnd) return;
+    const distance = touchStart - touchEnd;
+    const isLeftSwipe = distance > minSwipeDistance;
+    const isRightSwipe = distance < -minSwipeDistance;
+
+    // Right Swipe
+    if (isRightSwipe && isMobile && !state.isSidebarOpen) {
+      if (touchStart < 50) {
+        actions.setIsSidebarOpen(true);
+      }
+    }
+    // Left Swipe
+    if (isLeftSwipe && isMobile && state.isSidebarOpen) {
+      actions.setIsSidebarOpen(false);
+    }
+  };
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -61,6 +139,18 @@ const Home = () => {
     return <LoadingScreen message="Checking authentication..." />;
   }
 
+  if (isLocked) {
+    return (
+      <AppLockScreen
+        mode="lock_screen"
+        accounts={storedAccounts}
+        onUnlockAccount={handleUnlock}
+        onAddAccount={() => setIsLocked(false)}
+        onSuccess={() => {}}
+      />
+    );
+  }
+
   if (!state.userEmail) {
     console.log("[Home] Rendering Login");
     return <Login onLogin={actions.login} />;
@@ -70,7 +160,12 @@ const Home = () => {
 
   return (
     <ErrorBoundary>
-      <div style={styles.appContainer}>
+      <div
+        style={styles.appContainer}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+      >
         {state.error && <div style={styles.errorToast}>{state.error}</div>}
         {state.notification && (
           <NotificationToast
@@ -100,6 +195,13 @@ const Home = () => {
             actions.setView("welcome");
             actions.setActiveChat(null);
           }}
+          onSettings={() => {
+            setShowSettings(true);
+            actions.setIsSidebarOpen(false);
+          }}
+          onRename={(sid, currentName) =>
+            setRenameTarget({ sid, name: currentName })
+          }
         />
 
         <main
@@ -133,6 +235,7 @@ const Home = () => {
               setInput={actions.setInput}
               onSend={actions.handleSend}
               activeChat={state.activeChat}
+              session={state.sessions.find((s) => s.sid === state.activeChat)}
               onFileSelect={actions.handleFile}
               peerOnline={state.peerOnline}
               onStartCall={(mode: any) => actions.startCall(mode)}
@@ -167,6 +270,33 @@ const Home = () => {
             setIsWaiting={actions.setIsWaiting}
           />
         )}
+
+        {showSettings && (
+          <SettingsOverlay
+            onClose={() => setShowSettings(false)}
+            currentUserEmail={state.userEmail}
+          />
+        )}
+
+        {renameTarget && (
+          <RenameModal
+            currentName={renameTarget.name}
+            onRename={(newName) => {
+              actions.handleSetAlias(renameTarget.sid, newName);
+              setRenameTarget(null);
+            }}
+            onCancel={() => setRenameTarget(null)}
+          />
+        )}
+
+        {showProfileSetup && state.userEmail && (
+          <ProfileSetup
+            userEmail={state.userEmail}
+            onComplete={() => setShowProfileSetup(false)}
+          />
+        )}
+
+        {isLocked && <AppLockScreen onSuccess={() => setIsLocked(false)} />}
       </div>
     </ErrorBoundary>
   );

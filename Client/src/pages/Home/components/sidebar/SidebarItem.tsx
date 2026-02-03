@@ -1,23 +1,37 @@
 import React from "react";
 import { styles } from "../../Home.styles";
-import ChatClient from "../../../../services/ChatClient";
 import { SessionData } from "../../types";
+import UserAvatar from "../../../../components/UserAvatar";
 
 interface SidebarItemProps {
   data: SessionData;
   isActive: boolean;
   onSelect: (sid: string) => void;
+  onRename: (sid: string, currentName: string) => void;
 }
 
 export const SidebarItem: React.FC<SidebarItemProps> = ({
   data,
   isActive,
   onSelect,
+  onRename,
 }) => {
-  const { sid, lastMsg, lastMsgType, unread, online } = data;
+  const {
+    sid,
+    lastMsg,
+    lastMsgType,
+    unread,
+    online,
+    alias_name,
+    alias_avatar,
+    peer_name,
+    peer_avatar,
+    peerEmail,
+  } = data;
   const isOnline = online;
   const displayName =
-    ChatClient.sessions[sid]?.peerEmail || `Peer ${sid.slice(0, 6)}`;
+    alias_name || peer_name || peerEmail || `Peer ${sid.slice(0, 6)}`;
+  const avatarUrl = alias_avatar || peer_avatar;
 
   const getPreviewText = () => {
     if (!lastMsg && !lastMsgType) return isOnline ? "Online" : "Offline";
@@ -41,20 +55,25 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
   return (
     <div
       onClick={() => onSelect(sid)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onRename(sid, displayName);
+      }}
       style={{
         ...styles.sessionItem,
         background: isActive ? "rgba(99, 102, 241, 0.15)" : "transparent",
         position: "relative",
       }}
     >
-      <div
+      <UserAvatar
+        avatarUrl={avatarUrl}
+        name={displayName}
+        size={40}
         style={{
-          ...styles.avatar,
-          borderColor: isOnline ? "#22c55e" : "#334155",
+          marginRight: "12px",
+          border: `2px solid ${isOnline ? "#22c55e" : "#334155"}`,
         }}
-      >
-        {displayName[0].toUpperCase()}
-      </div>
+      />
       <div style={styles.sessionInfo}>
         <div
           style={{
