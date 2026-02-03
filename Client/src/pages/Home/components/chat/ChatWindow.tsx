@@ -13,6 +13,7 @@ import {
   Headphones,
   Globe,
   Phone,
+  ArrowLeft,
 } from "lucide-react";
 import { ChatMessage } from "../../types";
 
@@ -25,6 +26,7 @@ interface ChatWindowProps {
   onFileSelect: (file: File) => void;
   onStartCall: (mode: "Audio" | "Video") => void;
   peerOnline?: boolean;
+  onBack?: () => void;
 }
 
 export const ChatWindow = ({
@@ -35,6 +37,8 @@ export const ChatWindow = ({
   activeChat,
   onFileSelect,
   onStartCall,
+  peerOnline,
+  onBack,
 }: ChatWindowProps) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -43,6 +47,26 @@ export const ChatWindow = ({
   const [showPortModal, setShowPortModal] = useState(false);
   const [port, setPort] = useState("");
   const [isRecording, setIsRecording] = useState(false);
+
+  const getAvatarColor = (name: string) => {
+    const colors = [
+      "#ef4444",
+      "#f97316",
+      "#f59e0b",
+      "#10b981",
+      "#3b82f6",
+      "#6366f1",
+      "#8b5cf6",
+      "#ec4899",
+    ];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++)
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    return colors[Math.abs(hash) % colors.length];
+  };
+
+  const avatarColor = activeChat ? getAvatarColor(activeChat) : "#6366f1";
+  const initial = activeChat ? activeChat.charAt(0).toUpperCase() : "?";
 
   useEffect(() => {
     if (scrollRef.current)
@@ -91,15 +115,6 @@ export const ChatWindow = ({
       icon: <Headphones size={24} color="white" />,
       color: "#2cb67d",
       onClick: () => fileInputRef.current?.click(),
-    },
-    {
-      label: "Voice Call",
-      icon: <Phone size={24} color="white" />,
-      color: "#22c55e",
-      onClick: () => {
-        onStartCall("Audio");
-        setShowMenu(false);
-      },
     },
     {
       label: "Live Share",
@@ -172,14 +187,158 @@ export const ChatWindow = ({
   };
 
   return (
-    <div style={styles.chatWindow}>
+    <div style={{ ...styles.chatWindow, padding: 0 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "12px 16px",
+          paddingTop: "max(12px, env(safe-area-inset-top))",
+          borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+          backgroundColor: "#161b22",
+          background:
+            "linear-gradient(180deg, rgba(22,27,34,1) 0%, rgba(22,27,34,0.95) 100%)",
+          backdropFilter: undefined,
+          zIndex: 50,
+          flexShrink: 0,
+          minHeight: "calc(64px + env(safe-area-inset-top))",
+          marginBottom: "0",
+        }}
+      >
+        {onBack && (
+          <button
+            onClick={onBack}
+            style={{
+              background: "none",
+              border: "none",
+              marginRight: "8px",
+              padding: "8px",
+              marginLeft: "-8px",
+              cursor: "pointer",
+              color: "white",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: "50%",
+              transition: "background 0.2s",
+            }}
+            onMouseOver={(e) =>
+              (e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.1)")
+            }
+            onMouseOut={(e) =>
+              (e.currentTarget.style.backgroundColor = "transparent")
+            }
+          >
+            <ArrowLeft size={24} />
+          </button>
+        )}
+
+        <div
+          style={{
+            width: "42px",
+            height: "42px",
+            borderRadius: "50%",
+            backgroundColor: avatarColor,
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: "18px",
+            fontWeight: "bold",
+            color: "white",
+            marginRight: "12px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+          }}
+        >
+          {initial}
+        </div>
+        <div style={{ flex: 1, minWidth: 0, marginRight: "8px" }}>
+          <div
+            style={{
+              fontSize: "1.1rem",
+              fontWeight: 700,
+              color: "white",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              letterSpacing: "0.3px",
+            }}
+          >
+            {activeChat || "Chat"}
+          </div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              marginTop: "2px",
+            }}
+          >
+            <div
+              style={{
+                width: "8px",
+                height: "8px",
+                borderRadius: "50%",
+                backgroundColor: peerOnline ? "#22c55e" : "#6b7280",
+                boxShadow: peerOnline ? "0 0 8px #22c55e" : "none",
+              }}
+            />
+            <span
+              style={{
+                fontSize: "0.85rem",
+                color: "rgba(255,255,255,0.7)",
+                fontWeight: 500,
+              }}
+            >
+              {peerOnline ? "Online" : "Offline"}
+            </span>
+          </div>
+        </div>
+        <div style={styles.callButtonsContainer}>
+          <button
+            onClick={() => onStartCall("Audio")}
+            style={{
+              width: "44px",
+              height: "44px",
+              borderRadius: "14px",
+              backgroundColor: "rgba(34, 197, 94, 0.15)",
+              border: "1px solid rgba(34, 197, 94, 0.2)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              color: "#22c55e",
+              transition: "all 0.2s",
+            }}
+            onMouseDown={(e) =>
+              (e.currentTarget.style.transform = "scale(0.95)")
+            }
+            onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
+            onMouseOver={(e) =>
+              (e.currentTarget.style.backgroundColor =
+                "rgba(34, 197, 94, 0.25)")
+            }
+            onMouseOut={(e) =>
+              (e.currentTarget.style.backgroundColor =
+                "rgba(34, 197, 94, 0.15)")
+            }
+          >
+            <Phone size={22} />
+          </button>
+        </div>
+      </div>
+
       <input
         type="file"
         ref={fileInputRef}
         style={{ display: "none" }}
         onChange={handleFileSelect}
       />
-      <div ref={scrollRef} style={styles.messageList} className="animate-fade-up">
+      <div
+        ref={scrollRef}
+        style={styles.messageList}
+        className="animate-fade-up"
+      >
         {messages.map((msg, i) => (
           <MessageBubble key={i} msg={msg} />
         ))}
@@ -209,7 +368,7 @@ export const ChatWindow = ({
         </div>
       )}
 
-      <div style={styles.inputContainer}>
+      <div style={{ ...styles.inputContainer, margin: "0 16px 16px 16px" }}>
         <div
           onClick={() => setShowMenu(!showMenu)}
           style={{

@@ -1,5 +1,6 @@
 import { styles } from "../../Home.styles";
 import { SidebarItem } from "./SidebarItem";
+import { SessionData } from "../../types";
 
 export const Sidebar = ({
   sessions,
@@ -10,7 +11,16 @@ export const Sidebar = ({
   isMobile,
   onClose,
   onLogoClick,
-}: any) => (
+}: {
+  sessions: SessionData[];
+  activeChat: string | null;
+  onSelect: (sid: string) => void;
+  onAddPeer: () => void;
+  isOpen: boolean;
+  isMobile: boolean;
+  onClose: () => void;
+  onLogoClick: () => void;
+}) => (
   <>
     {isOpen && isMobile && (
       <div onClick={onClose} style={styles.mobileOverlay} />
@@ -39,11 +49,11 @@ export const Sidebar = ({
         {sessions.length === 0 ? (
           <p style={styles.emptyText}>No active links</p>
         ) : (
-          sessions.map((sid: string) => (
+          sessions.map((session) => (
             <SidebarItem
-              key={sid}
-              sid={sid}
-              isActive={activeChat === sid}
+              key={session.sid}
+              data={session}
+              isActive={activeChat === session.sid}
               onSelect={onSelect}
             />
           ))

@@ -38,6 +38,7 @@ const SCHEMA = {
       type TEXT DEFAULT 'text',
       timestamp INTEGER,
       status INTEGER DEFAULT 1,
+      is_read INTEGER DEFAULT 0,
       _ver INTEGER DEFAULT 2,
       FOREIGN KEY(sid) REFERENCES sessions(sid) ON DELETE CASCADE
     `,
@@ -91,7 +92,7 @@ export const dbInit = () => {
         mode: "secret",
         version: 1,
       });
-    } catch { }
+    } catch {}
 
     await CapacitorSQLite.open({ database: DATABASE_NAME });
 
@@ -176,8 +177,8 @@ async function syncTableSchema(tableName: string, targetColumnsRaw: string) {
       `CREATE TABLE ${tableName}_new(${targetColumnsStr});`,
       ...(sharedColumns.length > 0
         ? [
-          `INSERT INTO ${tableName}_new (${sharedColumns}) SELECT ${sharedColumns} FROM ${tableName};`,
-        ]
+            `INSERT INTO ${tableName}_new (${sharedColumns}) SELECT ${sharedColumns} FROM ${tableName};`,
+          ]
         : []),
       `DROP TABLE ${tableName};`,
       `ALTER TABLE ${tableName}_new RENAME TO ${tableName};`,

@@ -1,19 +1,16 @@
 import { useState, useEffect, useRef } from "react";
 import ChatClient from "../../../services/ChatClient";
-import { queryDB } from "../../../services/sqliteService";
-import { ChatMessage, InboundReq } from "../types";
+import { queryDB, executeDB } from "../../../services/sqliteService";
+import { SessionData, ChatMessage, InboundReq } from "../types";
 
 export const useChatLogic = () => {
   const [view, setView] = useState<"chat" | "add" | "welcome">("welcome");
   const [activeChat, setActiveChat] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [sessions, setSessions] = useState<string[]>([]);
+  const [sessions, setSessions] = useState<SessionData[]>([]);
   const [input, setInput] = useState("");
-  // const [inviteCode, setInviteCode] = useState<string | null>(null); // Removed
-  // const [isGenerating, setIsGenerating] = useState(false); // Removed
   const [isJoining, setIsJoining] = useState(false);
   const [targetEmail, setTargetEmail] = useState("");
-  // const [joinCode, setJoinCode] = useState(""); // Removed in favor of targetEmail
 
   const [isWaiting, setIsWaiting] = useState(false);
   const [inboundReq, setInboundReq] = useState<InboundReq | null>(null);
@@ -34,6 +31,10 @@ export const useChatLogic = () => {
   useEffect(() => {
     if (activeChat) {
       loadHistory(activeChat);
+      executeDB(
+        "UPDATE messages SET is_read = 1 WHERE sid = ? AND sender != 'me'",
+        [activeChat],
+      ).then(() => loadSessions());
       if (ChatClient.sessions[activeChat]) {
         setPeerOnline(ChatClient.sessions[activeChat].online);
       }
@@ -42,6 +43,28 @@ export const useChatLogic = () => {
       setPeerOnline(false);
     }
   }, [activeChat]);
+
+  const loadSessions = async () => {
+    const rows = await queryDB(`
+      SELECT s.sid,
+             (SELECT text FROM messages WHERE sid = s.sid ORDER BY timestamp DESC LIMIT 1) as lastMsg,
+             (SELECT type FROM messages WHERE sid = s.sid ORDER BY timestamp DESC LIMIT 1) as lastMsgType,
+             (SELECT timestamp FROM messages WHERE sid = s.sid ORDER BY timestamp DESC LIMIT 1) as lastTs,
+             (SELECT COUNT(*) FROM messages WHERE sid = s.sid AND is_read = 0 AND sender != 'me') as unread
+      FROM sessions s
+      ORDER BY lastTs DESC
+    `);
+
+    const formatted: SessionData[] = rows.map((r: any) => ({
+      sid: r.sid,
+      lastMsg: r.lastMsg || "",
+      lastMsgType: r.lastMsgType || "text",
+      lastTs: r.lastTs || 0,
+      unread: r.unread || 0,
+      online: ChatClient.sessions[r.sid]?.online || false,
+    }));
+    setSessions(formatted);
+  };
 
   const loadHistory = async (sid: string) => {
     const rows = await queryDB(
@@ -56,10 +79,11 @@ export const useChatLogic = () => {
        FROM messages m
        LEFT JOIN media md ON m.id = md.message_id
        WHERE m.sid = ? 
-       ORDER BY m.timestamp ASC`,
+       ORDER BY m.timestamp DESC 
+       LIMIT 30`,
       [sid],
     );
-    setMessages(rows as any);
+    setMessages((rows as any).reverse());
   };
 
   useEffect(() => {
@@ -81,15 +105,18 @@ export const useChatLogic = () => {
       });
 
     const onSessionUpdate = () => {
-      setSessions(Object.keys(client.sessions));
+      loadSessions();
       if (activeChatRef.current && client.sessions[activeChatRef.current]) {
         setPeerOnline(client.sessions[activeChatRef.current].online);
       }
     };
+
     const onMsg = (msg: ChatMessage) => {
       if (msg.sid === activeChatRef.current) {
         setMessages((prev) => [...prev, msg]);
+        executeDB("UPDATE messages SET is_read = 1 WHERE id = ?", [msg.id]);
       }
+      loadSessions();
     };
 
     const onDownloadProgress = ({ messageId, progress }: any) => {
@@ -116,7 +143,6 @@ export const useChatLogic = () => {
     client.on("message", onMsg);
     client.on("download_progress", onDownloadProgress);
     client.on("file_downloaded", onFileDownloaded);
-    // client.on("invite_ready", ...); // Removed
     client.on("waiting_for_accept", () => {
       setIsJoining(false);
       setIsWaiting(true);
@@ -140,13 +166,58 @@ export const useChatLogic = () => {
     client.on("call_outgoing", (call) =>
       setActiveCall({ ...call, status: "outgoing" }),
     );
+
+    loadSessions();
     client.on("call_started", () =>
-      setActiveCall((prev: any) => (prev ? { ...prev, status: "connected" } : null)),
+      setActiveCall((prev: any) =>
+        prev ? { ...prev, status: "connected" } : null,
+      ),
     );
     client.on("ice_status", (status) =>
-      setActiveCall((prev: any) => (prev ? { ...prev, iceStatus: status } : null)),
+      setActiveCall((prev: any) =>
+        prev ? { ...prev, iceStatus: status } : null,
+      ),
     );
-    client.on("call_ended", () => setActiveCall(null));
+    client.on("call_ended", async (data: any) => {
+      setActiveCall(null);
+      const sid = typeof data === "string" ? data : data.sid;
+      const duration = typeof data === "object" ? data.duration : 0;
+
+      if (duration > 0) {
+        const min = Math.floor(duration / 60000);
+        const sec = Math.floor((duration % 60000) / 1000);
+        const durationStr = `${min}m ${sec}s`;
+
+        const text = `Call ended • ${durationStr}`;
+        const id = crypto.randomUUID();
+        const timestamp = Date.now();
+
+        try {
+          await executeDB(
+            "INSERT INTO messages (id, sid, sender, text, type, timestamp, status) VALUES (?, ?, 'system', ?, 'system', ?, 1)",
+            [id, sid, text, timestamp],
+          );
+
+          if (activeChatRef.current === sid) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id,
+                sid,
+                text,
+                sender: "system",
+                type: "system",
+                timestamp,
+                status: 1,
+              },
+            ]);
+          }
+          loadSessions();
+        } catch (e) {
+          console.error("Failed to log call end:", e);
+        }
+      }
+    });
     client.on("message_status", ({ sid }) => {
       if (sid === activeChatRef.current) {
         loadHistory(sid);
@@ -162,7 +233,7 @@ export const useChatLogic = () => {
       client.off("session_updated", onSessionUpdate);
       client.off("message", onMsg);
       client.off("file_downloaded", onFileDownloaded);
-      client.off("auth_success", () => { });
+      client.off("auth_success", () => {});
     };
   }, []);
 
@@ -171,17 +242,18 @@ export const useChatLogic = () => {
     const currentInput = input;
     setInput("");
     await ChatClient.sendMessage(activeChat, currentInput);
-    setMessages((prev) => [
-      ...prev,
-      {
-        sid: activeChat,
-        text: currentInput,
-        sender: "me",
-        timestamp: Date.now(),
-        type: "text",
-        status: 1,
-      },
-    ]);
+
+    const newMsg: ChatMessage = {
+      sid: activeChat,
+      text: currentInput,
+      sender: "me",
+      timestamp: Date.now(),
+      type: "text",
+      status: 1,
+    };
+
+    setMessages((prev) => [...prev, newMsg]);
+    loadSessions();
   };
 
   const handleFile = async (file: File) => {
@@ -196,15 +268,12 @@ export const useChatLogic = () => {
       type: file.type.startsWith("image")
         ? "image"
         : file.type.startsWith("video")
-          ? "video"
-          : "file",
+        ? "video"
+        : "file",
       timestamp: Date.now(),
-      status: 1,
-      mediaStatus: "uploading",
-      mediaProgress: 0,
-      mediaFilename: file.name,
       mediaTotalSize: file.size,
       tempUrl: URL.createObjectURL(file),
+      status: 1,
     };
 
     setMessages((prev) => [...prev, tempMsg]);
@@ -219,6 +288,7 @@ export const useChatLogic = () => {
         prev.map((m) => (m.id === tempId ? { ...m, status: 3 } : m)),
       );
     });
+    loadSessions();
   };
 
   const handleConnect = async () => {
@@ -226,15 +296,15 @@ export const useChatLogic = () => {
     setIsJoining(true);
     try {
       await ChatClient.connectToPeer(targetEmail);
-      setIsJoining(false); // Request sent
-      setNotification({ type: 'success', message: 'Connection request sent' });
+      setIsJoining(false);
+      setNotification({ type: "success", message: "Connection request sent" });
       setTargetEmail("");
     } catch (e) {
       console.error(e);
       setIsJoining(false);
-      setNotification({ type: 'error', message: 'Failed to send request' });
+      setNotification({ type: "error", message: "Failed to send request" });
     }
-  }
+  };
 
   return {
     state: {
@@ -253,7 +323,7 @@ export const useChatLogic = () => {
       isSidebarOpen,
       notification,
       userEmail,
-      isLoading
+      isLoading,
     },
     actions: {
       login: (token: string) => ChatClient.login(token),
@@ -271,6 +341,7 @@ export const useChatLogic = () => {
       acceptCall: () => ChatClient.acceptCall(activeCall.sid),
       rejectCall: () => ChatClient.endCall(activeCall.sid),
       endCall: () => ChatClient.endCall(activeCall.sid),
-    }
+      clearNotification: () => setNotification(null),
+    },
   };
 };

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,6 +10,8 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -65,10 +68,21 @@ func verifyGoogleToken(token string) (string, error) {
 
 	var claims struct {
 		Email string `json:"email"`
+		Aud   string `json:"aud"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&claims); err != nil {
 		return "", err
 	}
+
+	validClients := map[string]bool{
+		"588653192623-aqs0s01hv62pbp5p7pe3r0h7mce8m10l.apps.googleusercontent.com": true, // Web/Electron
+		"588653192623-798q6uuiu3peo7mil47vrn4u47mfo0bm.apps.googleusercontent.com": true, // Android
+	}
+
+	if !validClients[claims.Aud] {
+		return "", fmt.Errorf("invalid token audience: %s", claims.Aud)
+	}
+
 	return claims.Email, nil
 }
 
@@ -88,6 +102,60 @@ func (s *Server) logConnection(initiator, target string) {
 	tHash := hex.EncodeToString(h2[:])
 
 	s.logger.Printf("CONNECTION: %s requested connection to %s on %s", iHash, tHash, time.Now().Format(time.RFC3339))
+}
+
+var sessionSecret []byte
+
+func init() {
+	sessionSecret = make([]byte, 32)
+	rand.Read(sessionSecret)
+} 
+
+func generateSessionToken(email string) string {
+	exp := time.Now().Add(30 * 24 * time.Hour).Unix()
+	data := fmt.Sprintf("sess:%d:%s", exp, email)
+	
+	h := hmac.New(sha256.New, sessionSecret)
+	h.Write([]byte(data))
+	sig := hex.EncodeToString(h.Sum(nil))
+	
+	return fmt.Sprintf("%s:%s", data, sig)
+}
+
+func verifyAuthToken(token string) (string, string, error) {
+	if strings.HasPrefix(token, "sess:") {
+		parts := strings.Split(token, ":")
+		if len(parts) != 4 {
+			return "", "", fmt.Errorf("invalid session format")
+		}
+		expStr := parts[1]
+		email := parts[2]
+		sig := parts[3]
+		
+		data := fmt.Sprintf("sess:%s:%s", expStr, email)
+		h := hmac.New(sha256.New, sessionSecret)
+		h.Write([]byte(data))
+		expectedSig := hex.EncodeToString(h.Sum(nil))
+		
+		if !hmac.Equal([]byte(sig), []byte(expectedSig)) {
+			return "", "", fmt.Errorf("invalid signature")
+		}
+		
+		exp, _ := strconv.ParseInt(expStr, 10, 64)
+		if time.Now().Unix() > exp {
+			return "", "", fmt.Errorf("token expired")
+		}
+		
+		return email, token, nil
+	}
+
+	email, err := verifyGoogleToken(token)
+	if err != nil {
+		return "", "", err
+	}
+	
+	newToken := generateSessionToken(email)
+	return email, newToken, nil
 }
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
@@ -147,13 +215,15 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		var frame Frame
 		if err := ws.ReadJSON(&frame); err != nil { break }
 
+
 		switch frame.T {
 		case "AUTH":
 			var d struct {
 				Token string `json:"token"`
 			}
 			json.Unmarshal(frame.Data, &d)
-			email, err := verifyGoogleToken(d.Token)
+			
+			email, sessionToken, err := verifyAuthToken(d.Token)
 			if err != nil {
 				s.send(client, Frame{T: "ERROR", Data: json.RawMessage(`{"message":"Auth failed"}`)})
 				continue
@@ -164,21 +234,23 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			
 			s.mu.Lock()
 			if oldClientID, exists := s.emailToClientId[email]; exists {
-				if oldClient, ok := s.clients[oldClientID]; ok {
-					// Disconnect the old client
-					s.mu.Unlock() // Unlock before sending to avoid deadlock if send locks
-					s.send(oldClient, Frame{T: "ERROR", Data: json.RawMessage(`{"message":"Logged in from another device"}`)})
-					oldClient.conn.Close() // This will trigger defer disconnect logic
-					s.mu.Lock() // Relock
-					delete(s.clients, oldClientID)
+				if _, ok := s.clients[oldClientID]; ok {
+					s.mu.Unlock()
+					// Reject NEW client
+					s.send(client, Frame{T: "ERROR", Data: json.RawMessage(`{"message":"Already logged in on another device"}`)})
+					return 
 				}
 			}
 			s.emailToClientId[email] = client.id
 			s.mu.Unlock()
 			
-			s.send(client, Frame{T: "AUTH_SUCCESS", Data: json.RawMessage(fmt.Sprintf(`{"email":"%s"}`, email))})
+			resp := map[string]string{
+				"email": email,
+				"token": sessionToken,
+			}
+			respBytes, _ := json.Marshal(resp)
+			s.send(client, Frame{T: "AUTH_SUCCESS", Data: json.RawMessage(respBytes)})
 
-		// Connect via Email
 		case "CONNECT_REQ":
 			if client.email == "" {
 				s.send(client, Frame{T: "ERROR", Data: json.RawMessage(`{"message":"Authentication required"}`)})
@@ -201,14 +273,11 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			}
 			targetClient := s.clients[targetClientId]
 			
-			// Create a session ID deterministically or randomly - let's use random for now but unique
 			sid := s.newID()
 			
-			// Init the session
 			s.sessions[sid] = &Session{id: sid, clients: map[string]*Client{client.id: client}}
 			s.mu.Unlock()
 
-			// Send Invite to Target
 			if targetClient != nil {
 				s.send(targetClient, Frame{
 					T:   "JOIN_REQUEST",
@@ -221,7 +290,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			s.mu.Lock()
 			if sess, ok := s.sessions[frame.SID]; ok {
 				sess.mu.Lock()
-				sess.clients[client.id] = client // Add accepter to session
+				sess.clients[client.id] = client 
 				for _, c := range sess.clients {
 					if c.id != client.id {
 						s.send(c, Frame{T: "JOIN_ACCEPT", SID: frame.SID, Data: frame.Data})
@@ -230,7 +299,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 				sess.mu.Unlock()
 			}
 			s.mu.Unlock()
-		// Client Deny the request
+
 	    case "JOIN_DENY":
 			s.mu.Lock()
 			if sess, ok := s.sessions[frame.SID]; ok {
@@ -243,7 +312,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 				sess.mu.Unlock()
 			}
 			s.mu.Unlock()
-		// Reconnect CLient
+
 		case "REATTACH":
 			if client.email == "" {
 				s.send(client, Frame{T: "ERROR", Data: json.RawMessage(`{"message":"Authentication required"}`)})
@@ -304,8 +373,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 				sess.clients[client.id] = client
 			}
 
+			recipientCount := 0
 			for _, c := range sess.clients {
 				if c.id != client.id {
+					recipientCount++
 					if err := s.send(c, frame); err == nil {
 						delivered = true
 					} else {
@@ -313,6 +384,8 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+
+			log.Printf("[Server] Relayed MSG in %s to %d recipients (Delivered: %v)", frame.SID, recipientCount, delivered)
 			sess.mu.Unlock()
 
 			if delivered {
@@ -321,7 +394,6 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 				s.send(client, Frame{T: "DELIVERED_FAILED", SID: frame.SID})
 			}
 		case "STREAM":
-			// Fast relay for media streams (Audio/Video). No logging of content, no DB storage.
 			s.mu.Lock()
 			sess, ok := s.sessions[frame.SID]
 			s.mu.Unlock()
@@ -331,12 +403,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			}
 
 			sess.mu.Lock()
-			// Ensure sender is still part of the session
 			if _, exists := sess.clients[client.id]; exists {
 				for _, c := range sess.clients {
 					if c.id != client.id {
-						// Fire and forget - if send fails, we drop the frame to maintain real-time sync
-						// We use s.send which has a deadline, providing some backpressure handling
 						s.send(c, frame)
 					}
 				}

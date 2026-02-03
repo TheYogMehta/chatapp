@@ -23,10 +23,10 @@ const config: CapacitorConfig = {
       preventScreenshots: true,
     },
     SocialLogin: {
-      google: {
-        webClientId: "588653192623-dldr83lei79ub9vqcbi45q7iofieqs1l.apps.googleusercontent.com",
-        mode: "online"
-      }
+      google: true,
+      facebook: false,
+      apple: false,
+      twitter: false
     },
 
   },

@@ -31,6 +31,11 @@ export class ChatClient extends EventEmitter {
   private nextStartTime: number = 0;
   private isCalling: boolean = false;
   private remoteAudio: HTMLAudioElement | null = null;
+  private mediaSource: MediaSource | null = null;
+  private sourceBuffer: SourceBuffer | null = null;
+  private audioQueue: ArrayBuffer[] = [];
+  private isSourceOpen = false;
+  private callStartTime: number = 0;
 
   static getInstance() {
     if (!ChatClient.instance) ChatClient.instance = new ChatClient();
@@ -193,10 +198,10 @@ export class ChatClient extends EventEmitter {
     const msgType = isImage
       ? "image"
       : isVideo
-        ? "video"
-        : isAudio
-          ? "audio"
-          : "file";
+      ? "video"
+      : isAudio
+      ? "audio"
+      : "file";
     const messageId = await this.insertMessageRecord(sid, "", msgType, "me");
 
     await StorageService.initMediaEntry(
@@ -257,26 +262,32 @@ export class ChatClient extends EventEmitter {
 
   public async startCall(sid: string, mode: "Audio" | "Video" = "Audio") {
     if (!this.sessions[sid]) throw new Error("Session not found");
+    if (!this.sessions[sid].online) {
+      this.emit("notification", { type: "error", message: "User is offline" });
+      return;
+    }
     if (this.isCalling) return;
+
+    this.callStartTime = Date.now();
 
     try {
       this.isCalling = true;
       console.log("[ChatClient] startCall: Sending invite to", sid);
-      
+
       const payload = await this.encryptForSession(
         sid,
-        JSON.stringify({ t: "CALL_START", data: { type: mode } })
+        JSON.stringify({ t: "CALL_START", data: { type: mode } }),
       );
       this.send({ t: "MSG", sid, data: { payload } });
 
       this.emit("call_outgoing", { sid, type: mode, remoteSid: sid });
-
     } catch (err: any) {
       this.isCalling = false;
       console.error("Error starting call:", err);
       this.emit("notification", {
         type: "error",
-        message: "Could not access microphone/camera. Please check permissions."
+        message:
+          "Could not access microphone/camera. Please check permissions.",
       });
       this.emit("error", "Could not start call");
     }
@@ -284,10 +295,21 @@ export class ChatClient extends EventEmitter {
 
   private async startStreaming(sid: string) {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 48000,
+          channelCount: 1,
+        },
+      });
       console.log("[ChatClient] startStreaming: Got local stream", stream.id);
 
-      this.mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+      this.mediaRecorder = new MediaRecorder(stream, {
+        mimeType: "audio/webm;codecs=opus",
+        bitsPerSecond: 48000,
+      });
       this.mediaRecorder.ondataavailable = async (e) => {
         if (e.data.size > 0) {
           try {
@@ -299,7 +321,7 @@ export class ChatClient extends EventEmitter {
           }
         }
       };
-      this.mediaRecorder.start(100);
+      this.mediaRecorder.start(50);
     } catch (e) {
       console.error("Error starting stream", e);
       this.emit("notification", { type: "error", message: "Microphone error" });
@@ -317,22 +339,20 @@ export class ChatClient extends EventEmitter {
 
       const payload = await this.encryptForSession(
         sid,
-        JSON.stringify({ t: "CALL_ACCEPT" })
+        JSON.stringify({ t: "CALL_ACCEPT" }),
       );
       this.send({ t: "MSG", sid, data: { payload } });
 
-      // Init playback context
-      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      this.nextStartTime = this.audioContext.currentTime;
-
+      this.callStartTime = Date.now();
       this.emit("call_started", { sid, status: "connected", remoteSid: sid });
 
+      this.setupAudioPlayback();
     } catch (err) {
       this.isCalling = false;
       console.error("Error accepting call:", err);
       this.emit("notification", {
         type: "error",
-        message: "Failed to accept call (Microphone error?)"
+        message: "Failed to accept call (Microphone error?)",
       });
     }
   }
@@ -340,48 +360,96 @@ export class ChatClient extends EventEmitter {
   public async endCall(sid: string) {
     const payload = await this.encryptForSession(
       sid,
-      JSON.stringify({ t: "CALL_END" })
+      JSON.stringify({ t: "CALL_END" }),
     );
     this.send({ t: "MSG", sid, data: { payload } });
     this.cleanupCall();
-    this.emit("call_ended", sid);
+    const duration = Date.now() - this.callStartTime;
+    this.emit("call_ended", { sid, duration });
   }
 
   private cleanupCall() {
     this.isCalling = false;
     if (this.mediaRecorder) {
-      if (this.mediaRecorder.state !== 'inactive') {
-        this.mediaRecorder.stream.getTracks().forEach(t => t.stop());
+      if (this.mediaRecorder.state !== "inactive") {
+        this.mediaRecorder.stream.getTracks().forEach((t) => t.stop());
         this.mediaRecorder.stop();
       }
       this.mediaRecorder = null;
     }
-    if (this.audioContext) {
-      this.audioContext.close();
-      this.audioContext = null;
+    if (this.remoteAudio) {
+      if (this.remoteAudio.src) {
+        URL.revokeObjectURL(this.remoteAudio.src);
+      }
+      this.remoteAudio.pause();
+      this.remoteAudio.src = "";
+      this.remoteAudio = null;
+    }
+    this.mediaSource = null;
+    this.sourceBuffer = null;
+    this.audioQueue = [];
+    this.isSourceOpen = false;
+  }
+
+  private setupAudioPlayback() {
+    if (this.remoteAudio) return;
+
+    this.remoteAudio = new Audio();
+    this.remoteAudio.autoplay = true;
+    const ms = new MediaSource();
+    this.mediaSource = ms;
+    this.remoteAudio.src = URL.createObjectURL(ms);
+
+    ms.addEventListener("sourceopen", () => {
+      if (this.mediaSource !== ms || ms.sourceBuffers.length > 0) return;
+
+      this.isSourceOpen = true;
+      try {
+        this.sourceBuffer = ms.addSourceBuffer("audio/webm;codecs=opus");
+        this.sourceBuffer.mode = "sequence";
+        this.sourceBuffer.addEventListener("updateend", () => {
+          this.processQueue();
+        });
+      } catch (e) {
+        console.error("Error adding SourceBuffer:", e);
+      }
+    });
+  }
+
+  private processQueue() {
+    if (
+      !this.sourceBuffer ||
+      this.sourceBuffer.updating ||
+      this.audioQueue.length === 0
+    )
+      return;
+    const chunk = this.audioQueue.shift();
+    if (chunk) {
+      try {
+        this.sourceBuffer.appendBuffer(chunk);
+      } catch (e) {
+        console.error("SourceBuffer append error", e);
+      }
     }
   }
 
   private async handleStream(frame: ServerFrame) {
     const { sid, data } = frame;
     try {
-      if (!this.audioContext) {
-         this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-         this.nextStartTime = this.audioContext.currentTime;
+      if (!this.remoteAudio) {
+        this.setupAudioPlayback();
       }
-      
+
       const decryptedBuffer = await this.decryptFromSession(sid, data);
       if (decryptedBuffer) {
-         this.audioContext.decodeAudioData(decryptedBuffer, (decoded) => {
-             const source = this.audioContext!.createBufferSource();
-             source.buffer = decoded;
-             source.connect(this.audioContext!.destination);
-             if (this.nextStartTime < this.audioContext!.currentTime) {
-                 this.nextStartTime = this.audioContext!.currentTime;
-             }
-             source.start(this.nextStartTime);
-             this.nextStartTime += decoded.duration;
-         }, (e) => console.error("Decode error", e));
+        this.audioQueue.push(decryptedBuffer);
+        if (
+          this.isSourceOpen &&
+          this.sourceBuffer &&
+          !this.sourceBuffer.updating
+        ) {
+          this.processQueue();
+        }
       }
     } catch (e) {
       console.error("Stream handling error", e);
@@ -399,7 +467,9 @@ export class ChatClient extends EventEmitter {
         console.error(`[Client] Decryption failed for ${sid}`);
         return;
       }
-      const { t, data } = JSON.parse(new TextDecoder().decode(decryptedBuffer));
+      const json = JSON.parse(new TextDecoder().decode(decryptedBuffer));
+      const { t, data } = json;
+      console.log("[ChatClient] Decrypted MSG:", json);
 
       switch (t) {
         case "MSG":
@@ -426,10 +496,10 @@ export class ChatClient extends EventEmitter {
           const msgType = isImage
             ? "image"
             : isVideo
-              ? "video"
-              : isAudio
-                ? "audio"
-                : "file";
+            ? "video"
+            : isAudio
+            ? "audio"
+            : "file";
 
           const localId = await this.insertMessageRecord(
             sid,
@@ -465,28 +535,52 @@ export class ChatClient extends EventEmitter {
         case "FILE_CHUNK":
           await this.handleFileChunk(sid, data);
           break;
-          
+
         case "CALL_START":
+          if (this.isCalling) {
+            console.log(
+              "[ChatClient] Already on call, rejecting new call from",
+              sid,
+            );
+            const busyPayload = await this.encryptForSession(
+              sid,
+              JSON.stringify({ t: "CALL_BUSY" }),
+            );
+            this.send({ t: "MSG", sid, data: { payload: busyPayload } });
+            return;
+          }
           console.log("[ChatClient] Received CALL_START");
           this.emit("call_incoming", { sid, type: "Audio", remoteSid: sid });
           break;
 
+        case "CALL_BUSY":
+          console.log("[ChatClient] Remote user is busy");
+          this.emit("notification", {
+            type: "info",
+            message: "User is busy on another call.",
+          });
+          this.cleanupCall();
+          this.emit("call_ended", { sid, duration: 0 });
+          break;
+
         case "CALL_ACCEPT":
           console.log("[ChatClient] Received CALL_ACCEPT");
-          // picked up, start our mic
           await this.startStreaming(sid);
-          
-          if (!this.audioContext) {
-             this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-             this.nextStartTime = this.audioContext.currentTime;
-          }
-          this.emit("call_started", { sid, status: "connected", remoteSid: sid });
+
+          this.setupAudioPlayback();
+
+          this.emit("call_started", {
+            sid,
+            status: "connected",
+            remoteSid: sid,
+          });
           break;
 
         case "CALL_END":
           console.log("[ChatClient] Received CALL_END");
           this.cleanupCall();
-          this.emit("call_ended", sid);
+          const duration = Date.now() - this.callStartTime;
+          this.emit("call_ended", { sid, duration });
           break;
       }
     } catch (e) {
@@ -634,7 +728,11 @@ export class ChatClient extends EventEmitter {
     switch (t) {
       case "ERROR":
         console.error("[Client] Server Error:", data);
-        if (data.message === "Auth failed" || data.message === "Authentication required") {
+        if (
+          data.message === "Auth failed" ||
+          data.message === "Authentication required" ||
+          data.message === "Already logged in on another device"
+        ) {
           await this.logout();
         }
         this.emit("notification", { type: "error", message: data.message });
@@ -644,10 +742,19 @@ export class ChatClient extends EventEmitter {
         break;
       case "AUTH_SUCCESS":
         this.userEmail = data.email;
+        if (data.token) {
+          this.authToken = data.token;
+          await setKeyFromSecureStorage("auth_token", data.token);
+          console.log("[Client] Session token saved/refreshed");
+        }
         this.emit("auth_success", data.email);
         break;
       case "JOIN_REQUEST":
-        this.emit("inbound_request", { sid, publicKey: data.publicKey, email: data.email });
+        this.emit("inbound_request", {
+          sid,
+          publicKey: data.publicKey,
+          email: data.email,
+        });
         break;
       case "JOIN_ACCEPT":
         await this.finalizeSession(sid, data.publicKey);
@@ -686,10 +793,11 @@ export class ChatClient extends EventEmitter {
     socket.send(f);
   }
 
-  // acceptFriend is duplicate, removing this block.
-  // private async finalizeSession(sid: string, remotePubB64: string, peerEmail?: string) ... this is correct
-
-  private async finalizeSession(sid: string, remotePubB64: string, peerEmail?: string) {
+  private async finalizeSession(
+    sid: string,
+    remotePubB64: string,
+    peerEmail?: string,
+  ) {
     const sharedKey = await this.deriveSharedKey(remotePubB64);
     this.sessions[sid] = { cryptoKey: sharedKey, online: true, peerEmail };
     const jwk = await crypto.subtle.exportKey("jwk", sharedKey);

@@ -40,7 +40,7 @@ const capacitorFileConfig: CapacitorElectronConfig =
 const myCapacitorApp = new ElectronCapacitorApp(
   capacitorFileConfig,
   trayMenuTemplate,
-  appMenuBarMenuTemplate
+  appMenuBarMenuTemplate,
 );
 
 // If deeplinking is enabled then we will set it up here.
@@ -67,16 +67,25 @@ if (electronIsDev) {
   await myCapacitorApp.init();
   // Check for updates if we are in a packaged app.
   // autoUpdater.checkForUpdatesAndNotify();
+  
   // Handle permissions
-  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    const allowedPermissions = ["media", "mediaKeySystem", "display-capture", "notifications", "clipboard-read", "clipboard-write"];
-    if (allowedPermissions.includes(permission)) {
-      callback(true);
-    } else {
-      callback(false);
-    }
-  });
-
+  session.defaultSession.setPermissionRequestHandler(
+    (webContents, permission, callback) => {
+      const allowedPermissions = [
+        "media",
+        "mediaKeySystem",
+        "display-capture",
+        "notifications",
+        "clipboard-read",
+        "clipboard-write",
+      ];
+      if (allowedPermissions.includes(permission)) {
+        callback(true);
+      } else {
+        callback(false);
+      }
+    },
+  );
 })();
 
 // Handle when all of our windows are close (platforms have their own expectations).
@@ -97,16 +106,17 @@ app.on("activate", async function () {
   }
 });
 
-// Place all ipc or other electron api calls and custom functionality under this line
-
 ipcMain.handle("GoogleLogin", async () => {
   return new Promise((resolve, reject) => {
-    const googleLoginUrl = "https://accounts.google.com/o/oauth2/v2/auth?" +
+    const googleLoginUrl =
+      "https://accounts.google.com/o/oauth2/v2/auth?" +
       "scope=openid%20email%20profile&" +
       "response_type=id_token%20token&" +
-      "nonce=" + Math.random().toString(36).substring(7) + "&" +
+      "nonce=" +
+      Math.random().toString(36).substring(7) +
+      "&" +
       "redirect_uri=http://localhost:5173&" +
-      "client_id=588653192623-dldr83lei79ub9vqcbi45q7iofieqs1l.apps.googleusercontent.com";
+      "client_id=588653192623-aqs0s01hv62pbp5p7pe3r0h7mce8m10l.apps.googleusercontent.com";
 
     const authWindow = new BrowserWindow({
       width: 500,
@@ -114,28 +124,28 @@ ipcMain.handle("GoogleLogin", async () => {
       show: true,
       webPreferences: {
         nodeIntegration: false,
-        contextIsolation: true
-      }
+        contextIsolation: true,
+      },
     });
 
     authWindow.loadURL(googleLoginUrl);
 
-    authWindow.webContents.on('will-redirect', (event, url) => {
+    authWindow.webContents.on("will-redirect", (event, url) => {
       handleNavigation(url);
     });
 
-    authWindow.webContents.on('will-navigate', (event, url) => {
+    authWindow.webContents.on("will-navigate", (event, url) => {
       handleNavigation(url);
     });
 
     function handleNavigation(url: string) {
-      if (url.includes('access_token=')) {
+      if (url.includes("access_token=")) {
         const rawCode = /access_token=([^&]*)/.exec(url) || null;
-        const accessToken = (rawCode && rawCode.length > 1) ? rawCode[1] : null;
-        
-        // Also try to get id_token if present, as that's what we usually use for identity
+        const accessToken = rawCode && rawCode.length > 1 ? rawCode[1] : null;
+
         const rawIdToken = /id_token=([^&]*)/.exec(url) || null;
-        const idToken = (rawIdToken && rawIdToken.length > 1) ? rawIdToken[1] : null;
+        const idToken =
+          rawIdToken && rawIdToken.length > 1 ? rawIdToken[1] : null;
 
         if (accessToken || idToken) {
           resolve({ accessToken, idToken });
@@ -144,11 +154,7 @@ ipcMain.handle("GoogleLogin", async () => {
       }
     }
 
-    authWindow.on('closed', () => {
-      // If closed without resolving, reject
-      // We can't easily check if resolved here without a flag, but for now this is fine.
-      // Ideally we'd reject if user closed manually.
-    });
+    authWindow.on("closed", () => {});
   });
 });
 
@@ -189,7 +195,7 @@ ipcMain.handle(
 
     const AppLockActive = await keytar.getPassword(
       "ChatApp",
-      "APP_LOCK_ENABLED"
+      "APP_LOCK_ENABLED",
     );
     if (AppLockActive !== "true") {
       isUnlocked = true;
@@ -207,7 +213,7 @@ ipcMain.handle(
       await keytar.setPassword(
         "ChatApp",
         "FAILED_ATTEMPTS",
-        attempts.toString()
+        attempts.toString(),
       );
 
       let cooldownMs = 0;
@@ -220,7 +226,7 @@ ipcMain.handle(
         await keytar.setPassword(
           "ChatApp",
           "LOCKOUT_UNTIL",
-          lockUntil.toString()
+          lockUntil.toString(),
         );
         return { success: false, isLockedOut: true, remainingMs: cooldownMs };
       }
@@ -228,7 +234,7 @@ ipcMain.handle(
     }
 
     return { success: false };
-  }
+  },
 );
 
 ipcMain.handle("SafeStorage:getKey", async (_event, key: string) => {
@@ -241,7 +247,7 @@ ipcMain.handle(
   async (_event, key: string, value: string) => {
     if (!isUnlocked) return null;
     return keytar.setPassword("ChatApp", key, value);
-  }
+  },
 );
 
 ipcMain.handle(
@@ -250,7 +256,7 @@ ipcMain.handle(
     if (!isUnlocked) return { success: false };
     await keytar.setPassword("ChatApp", "APP_LOCK_ENABLED", enabled.toString());
     return { success: true };
-  }
+  },
 );
 
 ipcMain.handle("SafeStorage:initlock", async () => {
@@ -272,5 +278,5 @@ ipcMain.handle(
       return { success: true };
     }
     return { success: false };
-  }
+  },
 );

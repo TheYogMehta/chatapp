@@ -25,9 +25,14 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({
           "--background": colors.background,
         }}
       >
-        <h1 className="title-large" style={{ marginBottom: "1rem" }}>{title}</h1>
+        <h1
+          className="title-large"
+          style={{ marginBottom: "1rem", color: "#f8fafc" }}
+        >
+          {title}
+        </h1>
         <IonSpinner name="crescent" color="primary" style={{ marginTop: 20 }} />
-        <p style={{ marginTop: 12, color: colors.text.secondary }}>{message}</p>
+        <p style={{ marginTop: 12, color: "#94a3b8" }}>{message}</p>
       </IonContent>
     </IonPage>
   );
