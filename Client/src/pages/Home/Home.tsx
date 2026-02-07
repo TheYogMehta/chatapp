@@ -268,6 +268,7 @@ const Home = () => {
 
         <CallOverlay
           callState={state.activeCall}
+          localStream={state.localStream}
           onAccept={actions.acceptCall}
           onReject={actions.rejectCall}
           onHangup={actions.endCall}

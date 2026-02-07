@@ -12,8 +12,6 @@ import {
   Phone,
 } from "lucide-react";
 
-import ChatClient from "../../../../services/ChatClient";
-
 import { IconButton } from "../../../../components/ui/IconButton";
 import {
   OverlayContainer,
@@ -33,6 +31,7 @@ import {
 interface CallOverlayProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   callState: any;
+  localStream: MediaStream | null;
   onAccept: () => void;
   onReject: () => void;
   onHangup: () => void;
@@ -41,6 +40,7 @@ interface CallOverlayProps {
 
 export const CallOverlay: React.FC<CallOverlayProps> = ({
   callState,
+  localStream,
   onAccept,
   onReject,
   onHangup,
@@ -211,23 +211,10 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
   // Local Video Effect
   const localVideoRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
-    // Check for existing stream
-    if (ChatClient.currentLocalStream && localVideoRef.current) {
-      localVideoRef.current.srcObject = ChatClient.currentLocalStream;
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = localStream;
     }
-
-    // Listen for new stream
-    const handleStream = (stream: MediaStream | null) => {
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
-    };
-
-    ChatClient.on("local_stream_ready", handleStream);
-    return () => {
-      ChatClient.off("local_stream_ready", handleStream);
-    };
-  }, [isVideoEnabled]); // Re-check when video is toggled
+  }, [localStream, isVideoEnabled]);
 
   // We need to import ChatClient to access the stream if it's not passed in callState.
   // Assuming callState might not have it.

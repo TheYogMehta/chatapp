@@ -25,6 +25,7 @@ export const useChatLogic = () => {
   const [activeCall, setActiveCall] = useState<any>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
 
   const activeChatRef = useRef<string | null>(null);
   activeChatRef.current = activeChat;
@@ -160,7 +161,12 @@ export const useChatLogic = () => {
       );
     };
 
+    const onLocalStream = (stream: MediaStream | null) => {
+      setLocalStream(stream);
+    };
+
     client.on("session_updated", onSessionUpdate);
+    client.on("local_stream_ready", onLocalStream);
     client.on("message", onMsg);
     client.on("download_progress", onDownloadProgress);
     client.on("file_downloaded", onFileDownloaded);
@@ -259,7 +265,7 @@ export const useChatLogic = () => {
       client.off("session_updated", onSessionUpdate);
       client.off("message", onMsg);
       client.off("file_downloaded", onFileDownloaded);
-      client.off("auth_success", () => {});
+      client.off("auth_success", () => { });
       client.off("remote_stream_ready", onRemoteStream);
     };
   }, []);
@@ -275,16 +281,16 @@ export const useChatLogic = () => {
     const replyContext =
       currentReplyTo && currentReplyTo.id
         ? {
-            id: currentReplyTo.id,
-            text: currentReplyTo.text,
-            sender:
-              currentReplyTo.sender === "me"
-                ? "Me"
-                : currentReplyTo.sender || "Other",
-            type: currentReplyTo.type,
-            mediaFilename: currentReplyTo.mediaFilename,
-            thumbnail: currentReplyTo.thumbnail,
-          }
+          id: currentReplyTo.id,
+          text: currentReplyTo.text,
+          sender:
+            currentReplyTo.sender === "me"
+              ? "Me"
+              : currentReplyTo.sender || "Other",
+          type: currentReplyTo.type,
+          mediaFilename: currentReplyTo.mediaFilename,
+          thumbnail: currentReplyTo.thumbnail,
+        }
         : undefined;
 
     await ChatClient.sendMessage(activeChat, currentInput, replyContext);
@@ -315,8 +321,8 @@ export const useChatLogic = () => {
       type: file.type.startsWith("image")
         ? "image"
         : file.type.startsWith("video")
-        ? "video"
-        : "file",
+          ? "video"
+          : "file",
       timestamp: Date.now(),
       mediaTotalSize: file.size,
       tempUrl: URL.createObjectURL(file),
@@ -372,6 +378,7 @@ export const useChatLogic = () => {
       userEmail,
       isLoading,
       replyingTo,
+      localStream,
     },
     actions: {
       login: (token: string) => ChatClient.login(token),
