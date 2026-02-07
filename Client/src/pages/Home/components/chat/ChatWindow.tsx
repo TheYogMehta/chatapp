@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useLayoutEffect } from "react";
 import { StorageService } from "../../../../utils/Storage";
 import { MessageBubble } from "./MessageBubble";
 import { PortShareModal } from "./PortShareModal";
@@ -84,7 +84,9 @@ export const ChatWindow = ({
   const [showPortModal, setShowPortModal] = useState(false);
   const [port, setPort] = useState("");
   const [isRecording, setIsRecording] = useState(false);
-  const [prevHeight, setPrevHeight] = useState(0);
+  const prevHeightRef = useRef(0);
+  const prevFirstMsgIdRef = useRef<string | null>(null);
+  const prevActiveChatRef = useRef<string | null>(null);
 
   const headerName =
     session?.alias_name ||
@@ -111,19 +113,44 @@ export const ChatWindow = ({
     };
   }, [avatarToUse]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!scrollRef.current) return;
-    const currentHeight = scrollRef.current.scrollHeight;
+    const scrollContainer = scrollRef.current;
+    const currentHeight = scrollContainer.scrollHeight;
+    const newFirstMsgId = messages.length > 0 ? messages[0].id || null : null;
 
-    // If messages activeChat changed completely or first load, scroll to bottom
-    // If we loaded more messages (prepended), adjust scroll top to maintain position
-    if (prevHeight > 0 && currentHeight > prevHeight) {
-      scrollRef.current.scrollTop = currentHeight - prevHeight;
-    } else {
-      scrollRef.current.scrollTop = currentHeight;
+    // Detect Chat Switch
+    if (activeChat !== prevActiveChatRef.current) {
+      scrollContainer.scrollTop = currentHeight;
+      prevActiveChatRef.current = activeChat;
+      prevHeightRef.current = currentHeight;
+      prevFirstMsgIdRef.current = newFirstMsgId;
+      return;
     }
-    setPrevHeight(currentHeight);
-  }, [messages]);
+
+    // Detect History Load (Prepend)
+    // We check if height increased AND the first message ID changed (meaning older messages added)
+    if (
+      prevHeightRef.current > 0 &&
+      currentHeight > prevHeightRef.current &&
+      newFirstMsgId !== prevFirstMsgIdRef.current
+    ) {
+      const heightDifference = currentHeight - prevHeightRef.current;
+      scrollContainer.scrollTop = heightDifference;
+    }
+    // Detect New Message (Append) - Auto-scroll if near bottom
+    else if (currentHeight > prevHeightRef.current) {
+      const isNearBottom =
+        scrollContainer.scrollTop + scrollContainer.clientHeight >=
+        prevHeightRef.current - 50;
+      if (isNearBottom) {
+        scrollContainer.scrollTop = currentHeight;
+      }
+    }
+
+    prevHeightRef.current = currentHeight;
+    prevFirstMsgIdRef.current = newFirstMsgId;
+  }, [messages, activeChat]);
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
