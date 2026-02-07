@@ -235,10 +235,10 @@ export class ChatClient extends EventEmitter {
     const msgType = isImage
       ? "image"
       : isVideo
-        ? "video"
-        : isAudio
-          ? "audio"
-          : "file";
+      ? "video"
+      : isAudio
+      ? "audio"
+      : "file";
     const messageId = await this.insertMessageRecord(sid, "", msgType, "me");
 
     await StorageService.initMediaEntry(
@@ -556,6 +556,10 @@ export class ChatClient extends EventEmitter {
 
     ms.addEventListener("sourceopen", () => {
       if (this.mediaSource !== ms || ms.sourceBuffers.length > 0) return;
+      if (!this.isCalling && !this.isCallConnected) {
+        console.warn("[ChatClient] MediaSource open but call ended, ignoring");
+        return;
+      }
 
       this.isSourceOpen = true;
       try {
@@ -613,6 +617,10 @@ export class ChatClient extends EventEmitter {
   private async handleStream(frame: ServerFrame) {
     const { sid, data } = frame;
     try {
+      if (!this.isCalling && !this.isCallConnected) {
+        // Ignore stream if not in call
+        return;
+      }
       if (!this.remoteVideo) {
         this.setupMediaPlayback();
       }
@@ -680,10 +688,10 @@ export class ChatClient extends EventEmitter {
           const msgType = isImage
             ? "image"
             : isVideo
-              ? "video"
-              : isAudio
-                ? "audio"
-                : "file";
+            ? "video"
+            : isAudio
+            ? "audio"
+            : "file";
 
           const localId = await this.insertMessageRecord(
             sid,

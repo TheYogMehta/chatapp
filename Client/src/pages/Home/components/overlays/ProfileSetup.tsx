@@ -139,15 +139,32 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
         }
       }
 
-      await executeDB(
-        "INSERT OR REPLACE INTO me (id, public_name, public_avatar) VALUES (1, ?, ?)",
-        [username, finalAvatar],
+      const existing = await queryDB(
+        "SELECT name_version, avatar_version FROM me WHERE id = 1",
       );
+
+      if (existing.length > 0) {
+        await executeDB(
+          "UPDATE me SET public_name = ?, public_avatar = ?, name_version = name_version + 1, avatar_version = avatar_version + 1 WHERE id = 1",
+          [username, finalAvatar],
+        );
+      } else {
+        await executeDB(
+          "INSERT INTO me (id, public_name, public_avatar, name_version, avatar_version) VALUES (1, ?, ?, 1, 1)",
+          [username, finalAvatar],
+        );
+      }
+
       await AccountService.updateProfile(
         userEmail,
         username,
         finalAvatar || "",
       );
+
+      // Broadcast the update
+      const { ChatClient } = await import("../../../../services/ChatClient");
+      ChatClient.getInstance().broadcastProfileUpdate();
+
       onComplete();
     } catch (e) {
       console.error("Failed to save profile", e);
