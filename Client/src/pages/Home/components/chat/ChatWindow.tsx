@@ -15,6 +15,7 @@ import {
   Phone,
   ArrowLeft,
   X,
+  Video,
 } from "lucide-react";
 import { ChatMessage, SessionData } from "../../types";
 import UserAvatar from "../../../../components/UserAvatar";
@@ -310,6 +311,37 @@ export const ChatWindow = ({
             }
           >
             <Phone size={22} />
+          </button>
+          <button
+            onClick={() => onStartCall("Video")}
+            style={{
+              width: "44px",
+              height: "44px",
+              borderRadius: "14px",
+              backgroundColor: "rgba(99, 102, 241, 0.15)",
+              border: "1px solid rgba(99, 102, 241, 0.2)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              color: "#6366f1",
+              transition: "all 0.2s",
+              marginLeft: "12px",
+            }}
+            onMouseDown={(e) =>
+              (e.currentTarget.style.transform = "scale(0.95)")
+            }
+            onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
+            onMouseOver={(e) =>
+              (e.currentTarget.style.backgroundColor =
+                "rgba(99, 102, 241, 0.25)")
+            }
+            onMouseOut={(e) =>
+              (e.currentTarget.style.backgroundColor =
+                "rgba(99, 102, 241, 0.15)")
+            }
+          >
+            <Video size={22} />
           </button>
         </div>
       </div>

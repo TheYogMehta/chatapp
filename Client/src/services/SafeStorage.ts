@@ -2,7 +2,7 @@ import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { Device } from "@capacitor/device";
 
 let cachedKey: CryptoKey | null = null;
-let isUnlockedAndroid = false;
+let isUnlockedAndroid = true;
 
 export async function Platform(): Promise<string> {
   const info = await Device.getInfo();

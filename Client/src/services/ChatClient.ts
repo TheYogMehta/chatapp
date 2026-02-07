@@ -34,11 +34,14 @@ export class ChatClient extends EventEmitter {
   private isCalling: boolean = false;
   private isCallConnected: boolean = false;
   private remoteAudio: HTMLAudioElement | null = null;
+  private remoteVideo: HTMLVideoElement | null = null;
   private mediaSource: MediaSource | null = null;
   private sourceBuffer: SourceBuffer | null = null;
   private audioQueue: ArrayBuffer[] = [];
   private isSourceOpen = false;
   private callStartTime: number = 0;
+  private currentStreamArgs: MediaStreamConstraints | null = null;
+  private remoteMimeType: string | null = null;
 
   static getInstance() {
     if (!ChatClient.instance) ChatClient.instance = new ChatClient();
@@ -57,10 +60,6 @@ export class ChatClient extends EventEmitter {
       if (this.authToken) {
         this.send({ t: "AUTH", data: { token: this.authToken } });
       }
-      Object.keys(this.sessions).forEach((sid) =>
-        this.send({ t: "REATTACH", sid }),
-      );
-      this.broadcastProfileUpdate();
     });
 
     socket.on("message", (frame: ServerFrame) => this.handleFrame(frame));
@@ -293,7 +292,10 @@ export class ChatClient extends EventEmitter {
     this.send({ t: "MSG", sid, data: { payload } });
   }
 
-  public async startCall(sid: string, mode: "Audio" | "Video" = "Audio") {
+  public async startCall(
+    sid: string,
+    mode: "Audio" | "Video" | "Screen" = "Audio",
+  ) {
     if (!this.sessions[sid]) throw new Error("Session not found");
     if (!this.sessions[sid].online) {
       this.emit("notification", { type: "error", message: "User is offline" });
@@ -307,13 +309,16 @@ export class ChatClient extends EventEmitter {
       this.isCalling = true;
       console.log("[ChatClient] startCall: Sending invite to", sid);
 
+      const mimeType = await this.startStreaming(sid, mode);
+
       const payload = await this.encryptForSession(
         sid,
-        JSON.stringify({ t: "CALL_START", data: { type: mode } }),
+        JSON.stringify({ t: "CALL_START", data: { type: mode, mimeType } }),
       );
       this.send({ t: "MSG", sid, data: { payload } });
 
       this.emit("call_outgoing", { sid, type: mode, remoteSid: sid });
+      // Pre-warm the stream locally if possible, or wait for accept
     } catch (err: any) {
       this.isCalling = false;
       console.error("Error starting call:", err);
@@ -326,39 +331,122 @@ export class ChatClient extends EventEmitter {
     }
   }
 
-  private async startStreaming(sid: string) {
+  public async switchStream(sid: string, mode: "Audio" | "Video" | "Screen") {
+    if (!this.isCalling) return;
+    console.log(`[ChatClient] Switching stream to ${mode}`);
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: 48000,
-          channelCount: 1,
-        },
+      // Stop current recorder
+      if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
+        this.mediaRecorder.stream.getTracks().forEach((t) => t.stop());
+        this.mediaRecorder.stop();
+      }
+      await this.startStreaming(sid, mode);
+    } catch (err: any) {
+      console.error("Failed to switch stream:", err);
+      this.emit("notification", {
+        type: "error",
+        message: err.message || "Failed to switch stream",
       });
+    }
+  }
+
+  private async startStreaming(
+    sid: string,
+    mode: "Audio" | "Video" | "Screen" = "Audio",
+  ): Promise<string> {
+    try {
+      let stream: MediaStream;
+      let mimeType = "audio/webm;codecs=opus"; // Default audio
+      let bitsPerSecond = 48000;
+
+      if (mode === "Screen") {
+        if (
+          !navigator.mediaDevices ||
+          !navigator.mediaDevices.getDisplayMedia
+        ) {
+          throw new Error("Screen sharing is not supported on this device.");
+        }
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: true,
+        });
+        mimeType = "video/webm;codecs=vp8,opus";
+        bitsPerSecond = 2500000; // 2.5 Mbps
+      } else if (mode === "Video") {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 15 },
+          },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+          },
+        });
+        mimeType = "video/webm;codecs=vp8,opus";
+        bitsPerSecond = 1000000; // 1 Mbps
+      } else {
+        // Audio only
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+        mimeType = "audio/webm;codecs=opus";
+        bitsPerSecond = 48000;
+      }
+
       console.log("[ChatClient] startStreaming: Got local stream", stream.id);
 
+      // Check supported types if needed, or fallbacks
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        console.warn(`[ChatClient] ${mimeType} not supported, trying fallback`);
+        if (mode !== "Audio" && MediaRecorder.isTypeSupported("video/webm")) {
+          mimeType = "video/webm";
+        } else if (MediaRecorder.isTypeSupported("video/mp4")) {
+          mimeType = "video/mp4";
+        }
+      }
+
       this.mediaRecorder = new MediaRecorder(stream, {
-        mimeType: "audio/webm;codecs=opus",
-        bitsPerSecond: 48000,
+        mimeType,
+        bitsPerSecond,
       });
+
       this.mediaRecorder.ondataavailable = async (e) => {
         if (e.data.size > 0) {
           try {
             const buffer = await e.data.arrayBuffer();
             const encrypted = await this.encryptForSession(sid, buffer);
+            // We can send a flag or detect type on receiver, but existing logic relies on single stream msg
+            // To support switching, receiver needs to know if format changed.
+            // For now, simpler implementation: receiver tries to append.
+            // Ideally we send a "STREAM_CONFIG" msg before data if type changes.
             this.send({ t: "STREAM", sid, data: encrypted });
           } catch (err) {
             console.error("Encryption streaming error:", err);
           }
         }
       };
-      this.mediaRecorder.start(50);
+
+      this.mediaRecorder.onstop = () => {
+        console.log("MediaRecorder stopped");
+      };
+
+      this.mediaRecorder.start(100); // 100ms slices
+      return mimeType;
     } catch (e) {
       console.error("Error starting stream", e);
-      this.emit("notification", { type: "error", message: "Microphone error" });
-      this.endCall(sid);
+      this.emit("notification", {
+        type: "error",
+        message: "Microphone/Camera error: " + e,
+      });
+      // Don't end call immediately on switch fail, just log
+      throw e;
     }
   }
 
@@ -368,11 +456,11 @@ export class ChatClient extends EventEmitter {
 
     try {
       this.isCalling = true;
-      await this.startStreaming(sid);
+      const mimeType = await this.startStreaming(sid, "Audio"); // Default accept is audio for now, or match offer?
 
       const payload = await this.encryptForSession(
         sid,
-        JSON.stringify({ t: "CALL_ACCEPT" }),
+        JSON.stringify({ t: "CALL_ACCEPT", data: { mimeType } }),
       );
       this.send({ t: "MSG", sid, data: { payload } });
 
@@ -380,7 +468,7 @@ export class ChatClient extends EventEmitter {
       this.isCallConnected = true;
       this.emit("call_started", { sid, status: "connected", remoteSid: sid });
 
-      this.setupAudioPlayback();
+      this.setupMediaPlayback();
     } catch (err) {
       this.isCalling = false;
       console.error("Error accepting call:", err);
@@ -397,9 +485,10 @@ export class ChatClient extends EventEmitter {
       JSON.stringify({ t: "CALL_END" }),
     );
     this.send({ t: "MSG", sid, data: { payload } });
+    const wasConnected = this.isCallConnected;
     this.cleanupCall();
     const duration = Date.now() - this.callStartTime;
-    this.emit("call_ended", { sid, duration, connected: this.isCallConnected });
+    this.emit("call_ended", { sid, duration, connected: wasConnected });
   }
 
   private cleanupCall() {
@@ -420,27 +509,66 @@ export class ChatClient extends EventEmitter {
       this.remoteAudio.src = "";
       this.remoteAudio = null;
     }
+
+    if (this.remoteVideo) {
+      if (this.remoteVideo.src) {
+        URL.revokeObjectURL(this.remoteVideo.src);
+      }
+      this.remoteVideo.pause();
+      this.remoteVideo.src = "";
+      this.remoteVideo = null;
+    }
     this.mediaSource = null;
     this.sourceBuffer = null;
     this.audioQueue = [];
     this.isSourceOpen = false;
+    this.remoteMimeType = null;
   }
 
-  private setupAudioPlayback() {
-    if (this.remoteAudio) return;
+  private setupMediaPlayback() {
+    if (this.remoteVideo) return; // Already setup
 
-    this.remoteAudio = new Audio();
-    this.remoteAudio.autoplay = true;
+    // We'll use a video element for everything, it can play audio too
+    this.remoteVideo = document.createElement("video");
+    this.remoteVideo.autoplay = true;
+    this.remoteVideo.playsInline = true;
+    // this.remoteVideo.style.display = "none"; // Hide initially? Or logic handles it
+
+    // Auto-attach to DOM? No, UI should attach it.
+    // Actually, UI needs the stream/element.
+    // For now, let's just create it and maybe emit it or expose it?
+    // The existing code wasn't attaching remoteAudio to DOM, just playing it.
+
     const ms = new MediaSource();
     this.mediaSource = ms;
-    this.remoteAudio.src = URL.createObjectURL(ms);
+    this.remoteVideo.src = URL.createObjectURL(ms);
 
     ms.addEventListener("sourceopen", () => {
       if (this.mediaSource !== ms || ms.sourceBuffers.length > 0) return;
 
       this.isSourceOpen = true;
       try {
-        this.sourceBuffer = ms.addSourceBuffer("audio/webm;codecs=opus");
+        // Try video codec first
+        // Note: receiver doesn't strictly know if it is audio or video unless we signal it.
+        // But adding a video buffer often handles audio too if MIME is correct.
+        // We'll try a generous MIME type.
+        // We'll try a generous MIME type.
+        let mime = this.remoteMimeType || "video/webm;codecs=vp8,opus";
+        if (!MediaSource.isTypeSupported(mime)) {
+          console.warn(
+            `[ChatClient] Prefered mime ${mime} not supported, trying fallbacks`,
+          );
+          mime = "video/webm;codecs=vp8,opus"; // Reset to default attempt
+          if (!MediaSource.isTypeSupported(mime)) {
+            mime = "video/webm;codecs=vp8"; // Fallback?
+            if (!MediaSource.isTypeSupported(mime)) {
+              mime = "audio/webm;codecs=opus";
+            }
+          }
+        }
+
+        console.log(`[ChatClient] Creating SourceBuffer with ${mime}`);
+        this.sourceBuffer = ms.addSourceBuffer(mime);
         this.sourceBuffer.mode = "sequence";
         this.sourceBuffer.addEventListener("updateend", () => {
           this.processQueue();
@@ -449,6 +577,9 @@ export class ChatClient extends EventEmitter {
         console.error("Error adding SourceBuffer:", e);
       }
     });
+
+    // Emit event so UI can grab the video element
+    this.emit("remote_stream_ready", this.remoteVideo);
   }
 
   private processQueue() {
@@ -471,8 +602,8 @@ export class ChatClient extends EventEmitter {
   private async handleStream(frame: ServerFrame) {
     const { sid, data } = frame;
     try {
-      if (!this.remoteAudio) {
-        this.setupAudioPlayback();
+      if (!this.remoteVideo) {
+        this.setupMediaPlayback();
       }
 
       const decryptedBuffer = await this.decryptFromSession(sid, data);
@@ -592,7 +723,12 @@ export class ChatClient extends EventEmitter {
             return;
           }
           console.log("[ChatClient] Received CALL_START");
-          this.emit("call_incoming", { sid, type: "Audio", remoteSid: sid });
+          if (data?.mimeType) this.remoteMimeType = data.mimeType;
+          this.emit("call_incoming", {
+            sid,
+            type: data?.type || "Audio",
+            remoteSid: sid,
+          });
           break;
 
         case "CALL_BUSY":
@@ -607,9 +743,10 @@ export class ChatClient extends EventEmitter {
 
         case "CALL_ACCEPT":
           console.log("[ChatClient] Received CALL_ACCEPT");
-          await this.startStreaming(sid);
+          if (data?.mimeType) this.remoteMimeType = data.mimeType;
+          await this.startStreaming(sid); // Default audio for now on accept
 
-          this.setupAudioPlayback();
+          this.setupMediaPlayback();
           this.isCallConnected = true;
 
           this.emit("call_started", {
@@ -952,15 +1089,32 @@ export class ChatClient extends EventEmitter {
           await AccountService.addAccount(data.email, data.token);
           await setActiveUser(data.email);
 
-          const key = await getKeyFromSecureStorage(
+          let key = await getKeyFromSecureStorage(
             await AccountService.getStorageKey(data.email, "MASTER_KEY"),
           );
+          if (!key) {
+            console.log("[Client] Generating new MASTER_KEY for user");
+            const raw = crypto.getRandomValues(new Uint8Array(32));
+            key = Array.from(raw)
+              .map((b) => b.toString(16).padStart(2, "0"))
+              .join("");
+            await setKeyFromSecureStorage(
+              await AccountService.getStorageKey(data.email, "MASTER_KEY"),
+              key,
+            );
+          }
           const dbName = await AccountService.getDbName(data.email);
-          await switchDatabase(dbName, key || undefined);
+          await switchDatabase(dbName, key);
 
           this.sessions = {};
           await this.loadSessions();
           await this.loadIdentity();
+
+          // Sync presence and profile now that we know who we are talking to
+          Object.keys(this.sessions).forEach((sid) =>
+            this.send({ t: "REATTACH", sid }),
+          );
+          this.broadcastProfileUpdate();
 
           this.emit("session_updated");
         }

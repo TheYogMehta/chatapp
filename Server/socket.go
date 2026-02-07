@@ -114,7 +114,7 @@ func verifyGoogleToken(token string) (string, error) {
 
 	validClients := map[string]bool{
 		"588653192623-aqs0s01hv62pbp5p7pe3r0h7mce8m10l.apps.googleusercontent.com": true, // Web/Electron
-		"588653192623-798q6uuiu3peo7mil47vrn4u47mfo0bm.apps.googleusercontent.com": true, // Android
+		"588653192623-lrcr1rs3meptlo4a2dkt6aam6jpvoua1.apps.googleusercontent.com": true, // Android
 	}
 
 	if !validClients[claims.Aud] {

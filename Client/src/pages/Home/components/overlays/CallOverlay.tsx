@@ -7,6 +7,9 @@ import {
   MicOff,
   Minimize2,
   Maximize2,
+  Video,
+  VideoOff,
+  Monitor,
 } from "lucide-react";
 
 interface CallOverlayProps {
@@ -14,6 +17,7 @@ interface CallOverlayProps {
   onAccept: () => void;
   onReject: () => void;
   onHangup: () => void;
+  onSwitchStream?: (mode: "Audio" | "Video" | "Screen") => void;
 }
 
 export const CallOverlay: React.FC<CallOverlayProps> = ({
@@ -21,11 +25,14 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
   onAccept,
   onReject,
   onHangup,
+  onSwitchStream,
 }) => {
   const [duration, setDuration] = useState(0);
   const [isMinimized, setIsMinimized] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [isVideoEnabled, setIsVideoEnabled] = useState(false);
   const [position, setPosition] = useState({ x: 20, y: 20 });
+  const videoContainerRef = useRef<HTMLDivElement>(null);
 
   const isDragging = useRef(false);
   const dragStart = useRef({ x: 0, y: 0 });
@@ -34,12 +41,29 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
     let interval: any;
     if (callState?.status === "connected") {
       interval = setInterval(() => setDuration((d) => d + 1), 1000);
+      // Auto-enable video UI if type is Video/Screen, but toggle state only if we initiated?
+      // Actually callState.type tells us if WE started it as video.
+      // But remote stream type is what matters for clear indication?
+      // For now, rely on manual toggle or if remote video exists.
     } else {
       setDuration(0);
       setIsMinimized(false);
+      setIsVideoEnabled(false);
     }
     return () => clearInterval(interval);
   }, [callState?.status]);
+
+  useEffect(() => {
+    if (callState?.remoteVideo && videoContainerRef.current) {
+      // Clear previous
+      videoContainerRef.current.innerHTML = "";
+      videoContainerRef.current.appendChild(callState.remoteVideo);
+      callState.remoteVideo.style.width = "100%";
+      callState.remoteVideo.style.height = "100%";
+      callState.remoteVideo.style.objectFit = "cover";
+      callState.remoteVideo.style.borderRadius = "12px";
+    }
+  }, [callState?.remoteVideo, isMinimized]);
 
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60)
@@ -71,6 +95,21 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
     isDragging.current = false;
   };
 
+  const toggleVideo = () => {
+    const newState = !isVideoEnabled;
+    setIsVideoEnabled(newState);
+    if (onSwitchStream) {
+      onSwitchStream(newState ? "Video" : "Audio");
+    }
+  };
+
+  const shareScreen = () => {
+    if (onSwitchStream) {
+      onSwitchStream("Screen");
+      setIsVideoEnabled(true); // Screen implies video UI
+    }
+  };
+
   if (!callState || callState.status === "idle") return null;
 
   if (callState.status === "ringing" || callState.status === "outgoing") {
@@ -96,8 +135,8 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
           </h2>
           <p style={{ color: "#94a3b8", marginBottom: "40px" }}>
             {callState.status === "outgoing"
-              ? "Calling..."
-              : "Incoming Call..."}
+              ? `Calling (${callState.type || "Audio"})...`
+              : `Incoming ${callState.type || "Audio"} Call...`}
           </p>
 
           <div
@@ -162,78 +201,46 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
           left: position.x,
           top: position.y,
           width: "200px",
+          height: "150px", // Fixed height for video
           backgroundColor: "#1e293b",
           borderRadius: "12px",
           boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
-          padding: "16px",
+          padding: "0",
           zIndex: 1000,
           cursor: "grab",
           border: "1px solid rgba(255,255,255,0.1)",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
         }}
       >
         <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: "12px",
-          }}
+          style={{ flex: 1, position: "relative", backgroundColor: "black" }}
         >
-          <span
-            style={{
-              color: "#22c55e",
-              fontSize: "12px",
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-            }}
-          >
-            ● {formatTime(duration)}
-          </span>
+          {/* Video Container */}
+          <div
+            ref={videoContainerRef}
+            style={{ width: "100%", height: "100%" }}
+          />
+
+          {/* Overlay controls when minimized? kept minimal */}
           <button
-            onClick={() => setIsMinimized(false)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsMinimized(false);
+            }}
             style={{
-              background: "none",
+              position: "absolute",
+              top: 5,
+              right: 5,
+              background: "rgba(0,0,0,0.5)",
               border: "none",
               color: "white",
               cursor: "pointer",
+              borderRadius: "4px",
             }}
           >
             <Maximize2 size={16} />
-          </button>
-        </div>
-        <div style={{ display: "flex", gap: "10px", justifyContent: "center" }}>
-          <button
-            onClick={() => setIsMuted(!isMuted)}
-            style={{
-              background: isMuted ? "white" : "rgba(255,255,255,0.1)",
-              color: isMuted ? "black" : "white",
-              border: "none",
-              borderRadius: "50%",
-              width: 36,
-              height: 36,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            {isMuted ? <MicOff size={16} /> : <Mic size={16} />}
-          </button>
-          <button
-            onClick={onHangup}
-            style={{
-              background: "#ef4444",
-              color: "white",
-              border: "none",
-              borderRadius: "50%",
-              width: 36,
-              height: 36,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <PhoneOff size={16} />
           </button>
         </div>
       </div>
@@ -250,6 +257,7 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
           cursor: "pointer",
           color: "white",
           opacity: 0.7,
+          zIndex: 10,
         }}
         onClick={() => setIsMinimized(true)}
       >
@@ -262,26 +270,57 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          gap: "40px",
+          width: "100%",
+          height: "100%",
+          justifyContent: "space-between",
+          paddingBottom: "40px",
         }}
       >
         <div
           style={{
-            width: "150px",
-            height: "150px",
-            borderRadius: "50%",
-            background: "linear-gradient(135deg, #6366f1, #a855f7)",
+            flex: 1,
+            width: "100%",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            boxShadow: "0 0 60px rgba(99, 102, 241, 0.4)",
+            position: "relative",
           }}
         >
-          <span
-            style={{ fontSize: "64px", color: "white", fontWeight: "bold" }}
-          >
-            {callState.remoteSid?.[0]?.toUpperCase()}
-          </span>
+          {/* Main Video Area */}
+          <div
+            ref={videoContainerRef}
+            style={{
+              width: "100%",
+              height: "100%",
+              maxWidth: "1000px",
+              maxHeight: "80vh",
+              backgroundColor: "black",
+              borderRadius: "16px",
+              overflow: "hidden",
+              display: callState.remoteVideo ? "block" : "none",
+            }}
+          />
+
+          {!callState.remoteVideo && (
+            <div
+              style={{
+                width: "150px",
+                height: "150px",
+                borderRadius: "50%",
+                background: "linear-gradient(135deg, #6366f1, #a855f7)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                boxShadow: "0 0 60px rgba(99, 102, 241, 0.4)",
+              }}
+            >
+              <span
+                style={{ fontSize: "64px", color: "white", fontWeight: "bold" }}
+              >
+                {callState.remoteSid?.[0]?.toUpperCase()}
+              </span>
+            </div>
+          )}
         </div>
 
         <div>
@@ -293,7 +332,7 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
           </p>
         </div>
 
-        <div style={{ display: "flex", gap: "32px", marginTop: "40px" }}>
+        <div style={{ display: "flex", gap: "32px", marginTop: "20px" }}>
           <button
             onClick={() => setIsMuted(!isMuted)}
             style={{
@@ -311,6 +350,46 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
             }}
           >
             {isMuted ? <MicOff size={28} /> : <Mic size={28} />}
+          </button>
+
+          <button
+            onClick={toggleVideo}
+            style={{
+              width: "64px",
+              height: "64px",
+              borderRadius: "50%",
+              backgroundColor: isVideoEnabled
+                ? "white"
+                : "rgba(255,255,255,0.1)",
+              color: isVideoEnabled ? "black" : "white",
+              border: "none",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              transition: "all 0.2s",
+            }}
+          >
+            {isVideoEnabled ? <Video size={28} /> : <VideoOff size={28} />}
+          </button>
+
+          <button
+            onClick={shareScreen}
+            style={{
+              width: "64px",
+              height: "64px",
+              borderRadius: "50%",
+              backgroundColor: "rgba(255,255,255,0.1)",
+              color: "white",
+              border: "none",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              transition: "all 0.2s",
+            }}
+          >
+            <Monitor size={28} />
           </button>
 
           <button

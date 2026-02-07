@@ -282,6 +282,7 @@ const Home = () => {
           onAccept={actions.acceptCall}
           onReject={actions.rejectCall}
           onHangup={actions.endCall}
+          onSwitchStream={actions.switchStream}
         />
 
         {(state.inboundReq || state.isWaiting) && (

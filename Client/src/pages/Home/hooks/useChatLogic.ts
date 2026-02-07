@@ -154,6 +154,12 @@ export const useChatLogic = () => {
       );
     };
 
+    const onRemoteStream = (videoEl: HTMLVideoElement) => {
+      setActiveCall((prev: any) =>
+        prev ? { ...prev, remoteVideo: videoEl } : null,
+      );
+    };
+
     client.on("session_updated", onSessionUpdate);
     client.on("message", onMsg);
     client.on("download_progress", onDownloadProgress);
@@ -193,6 +199,7 @@ export const useChatLogic = () => {
         prev ? { ...prev, iceStatus: status } : null,
       ),
     );
+    client.on("remote_stream_ready", onRemoteStream);
     client.on("call_ended", async (data: any) => {
       setActiveCall(null);
       const sid = typeof data === "string" ? data : data.sid;
@@ -253,6 +260,7 @@ export const useChatLogic = () => {
       client.off("message", onMsg);
       client.off("file_downloaded", onFileDownloaded);
       client.off("auth_success", () => {});
+      client.off("remote_stream_ready", onRemoteStream);
     };
   }, []);
 
@@ -379,6 +387,8 @@ export const useChatLogic = () => {
       handleFile,
       handleConnect,
       startCall: (type: any) => ChatClient.startCall(activeChat!, type),
+      switchStream: (mode: any) =>
+        ChatClient.switchStream(activeCall.sid, mode),
       acceptCall: () => ChatClient.acceptCall(activeCall.sid),
       rejectCall: () => ChatClient.endCall(activeCall.sid),
       endCall: () => ChatClient.endCall(activeCall.sid),
