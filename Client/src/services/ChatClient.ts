@@ -857,14 +857,16 @@ export class ChatClient extends EventEmitter {
 
             let avatarFile = null;
             if (avatar) {
-              let base64 = avatar;
+              // Check if it's a data URI
               if (avatar.startsWith("data:")) {
-                base64 = avatar.split(",")[1];
+                // Save to dedicated profile storage using SID as identifier
+                // This overwrites any existing profile image for this SID, preventing duplicates
+                const base64 = avatar.split(",")[1];
+                avatarFile = await StorageService.saveProfileImage(base64, sid);
+              } else {
+                // It might be a legacy filename or something else, keep as is
+                avatarFile = avatar;
               }
-              avatarFile = await StorageService.saveRawFile(
-                base64,
-                `peer_avatar_${sid}_${Date.now()}.txt`,
-              );
             }
 
             await executeDB(
