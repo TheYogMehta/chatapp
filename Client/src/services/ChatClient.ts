@@ -12,6 +12,10 @@ import { StorageService } from "../utils/Storage";
 import { MessageQueue } from "../utils/MessageQueue";
 import * as bip39 from "bip39";
 import { Buffer } from "buffer";
+import {
+  encryptToPackedString,
+  decryptFromPackedString,
+} from "../utils/crypto";
 
 (window as any).Buffer = Buffer;
 
@@ -54,6 +58,10 @@ export class ChatClient extends EventEmitter {
   static getInstance() {
     if (!ChatClient.instance) ChatClient.instance = new ChatClient();
     return ChatClient.instance;
+  }
+
+  public send(frame: any) {
+    socket.send(frame);
   }
 
   public hasToken(): boolean {
@@ -1008,23 +1016,18 @@ export class ChatClient extends EventEmitter {
 
   private async encryptForSession(
     sid: string,
-    data: string | ArrayBuffer,
+    data: string | Uint8Array | ArrayBuffer,
   ): Promise<string> {
     const session = this.sessions[sid];
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const encoded =
-      typeof data === "string"
-        ? new TextEncoder().encode(data)
-        : new Uint8Array(data);
-    const enc = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv },
-      session.cryptoKey,
-      encoded,
-    );
-    const combined = new Uint8Array(12 + enc.byteLength);
-    combined.set(iv);
-    combined.set(new Uint8Array(enc), 12);
-    return btoa(String.fromCharCode(...combined));
+    // Normalize data to string or Uint8Array as expected by the helper
+    let payload: string | Uint8Array;
+    if (data instanceof ArrayBuffer) {
+      payload = new Uint8Array(data);
+    } else {
+      payload = data;
+    }
+
+    return encryptToPackedString(payload, session.cryptoKey);
   }
 
   private async decryptFromSession(
@@ -1032,14 +1035,8 @@ export class ChatClient extends EventEmitter {
     payload: string,
   ): Promise<ArrayBuffer | null> {
     const session = this.sessions[sid];
-    const raw = Uint8Array.from(atob(payload), (c) => c.charCodeAt(0));
-    return crypto.subtle
-      .decrypt(
-        { name: "AES-GCM", iv: raw.slice(0, 12) },
-        session.cryptoKey,
-        raw.slice(12),
-      )
-      .catch(() => null);
+    const decrypted = await decryptFromPackedString(payload, session.cryptoKey);
+    return decrypted ? (decrypted.buffer as ArrayBuffer) : null;
   }
 
   public async logout() {
@@ -1190,10 +1187,6 @@ export class ChatClient extends EventEmitter {
         this.emit("message_status", { sid });
         break;
     }
-  }
-
-  public send(f: any) {
-    socket.send(f);
   }
 
   private async finalizeSession(

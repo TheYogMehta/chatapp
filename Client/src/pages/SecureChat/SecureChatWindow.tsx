@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   Lock,
-  Send,
   MoreVertical,
   Paperclip,
   ArrowLeft,
@@ -9,8 +8,9 @@ import {
   Trash2,
   Copy,
   Eye,
-  Key,
   FileText,
+  Send,
+  Key,
   FolderOpen,
 } from "lucide-react";
 import { useHistory } from "react-router-dom";
@@ -37,7 +37,6 @@ import { MessageBubble } from "../Home/components/chat/MessageBubble";
 import { ChatMessage } from "../Home/types";
 import { colors } from "../../theme/design-system";
 import { AppLockScreen } from "../Home/components/overlays/AppLockScreen";
-import { AccountService } from "../../services/AccountService";
 import { useSecureChat } from "./hooks/useSecureChat";
 import { VaultItem } from "../../utils/secureStorage";
 
@@ -112,14 +111,14 @@ export const SecureChatWindow: React.FC = () => {
           contentUrl: url,
           mimeType: item.metadata.type,
           title: item.metadata.filename,
-        });
+        } as any);
       } else {
         const content = decrypted as string;
         setViewingItem({
           ...item,
           value: content,
           title: item.metadata.username || "Note",
-        });
+        } as any);
       }
     } catch (e: any) {
       alert("Decryption failed: " + e.message);

@@ -24,7 +24,7 @@ export const openDB = (): Promise<IDBDatabase> => {
         db.deleteObjectStore(STORE_NAME);
       }
 
-      const store = db.createObjectStore(STORE_NAME, { keyPath: "id" });
+      db.createObjectStore(STORE_NAME, { keyPath: "id" });
     };
 
     request.onsuccess = (event) => {

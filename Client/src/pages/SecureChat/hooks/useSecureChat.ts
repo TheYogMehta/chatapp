@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import {
   deriveKey,
   encryptData,
@@ -7,6 +7,8 @@ import {
   generateSalt,
   bufferToBase64,
   base64ToBuffer,
+  hexToUint8Array,
+  uint8ArrayToHex,
 } from "../../../utils/crypto";
 import {
   storeItem,
@@ -60,9 +62,7 @@ export const useSecureChat = () => {
         if (!saltHex) {
           throw new Error("Vault integrity error: Salt missing");
         } else {
-          salt = new Uint8Array(
-            saltHex.match(/.{1,2}/g)!.map((byte) => parseInt(byte, 16)),
-          );
+          salt = hexToUint8Array(saltHex);
         }
 
         const derivedKey = await deriveKey(mnemonic, salt);
@@ -105,15 +105,11 @@ export const useSecureChat = () => {
         let saltHex = localStorage.getItem(getSaltKey());
         if (!saltHex) {
           const salt = generateSalt();
-          saltHex = Array.from(salt)
-            .map((b) => b.toString(16).padStart(2, "0"))
-            .join("");
+          saltHex = uint8ArrayToHex(salt);
           localStorage.setItem(getSaltKey(), saltHex);
         }
 
-        const salt = new Uint8Array(
-          saltHex.match(/.{1,2}/g)!.map((byte) => parseInt(byte, 16)),
-        );
+        const salt = hexToUint8Array(saltHex);
 
         const derivedKey = await deriveKey(mnemonic, salt);
         setKey(derivedKey);

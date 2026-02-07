@@ -1,5 +1,9 @@
 import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
 import { Device } from "@capacitor/device";
+import {
+  encryptToPackedString,
+  decryptFromPackedString,
+} from "../utils/crypto";
 
 let cachedKey: CryptoKey | null = null;
 const isUnlockedAndroid = true;
@@ -15,10 +19,6 @@ export async function hashIdentifier(identifier: string): Promise<string> {
   return Array.from(new Uint8Array(hashBuffer))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-}
-
-export async function hashPin(pin: string): Promise<string> {
-  return hashIdentifier(pin);
 }
 
 async function getCryptoKey(): Promise<CryptoKey> {
@@ -38,34 +38,14 @@ async function getCryptoKey(): Promise<CryptoKey> {
 
 export async function encryptData(value: string): Promise<string> {
   const key = await getCryptoKey();
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encrypted = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    key,
-    new TextEncoder().encode(value),
-  );
-  const combined = new Uint8Array(iv.length + encrypted.byteLength);
-  combined.set(iv);
-  combined.set(new Uint8Array(encrypted), iv.length);
-
-  const chunks = [];
-  const chunkSize = 32768;
-  for (let i = 0; i < combined.length; i += chunkSize) {
-    chunks.push(String.fromCharCode(...combined.slice(i, i + chunkSize)));
-  }
-  return btoa(chunks.join(""));
+  return encryptToPackedString(value, key);
 }
 
 export async function decryptData(payload: string): Promise<string | null> {
   try {
-    const raw = Uint8Array.from(atob(payload), (c) => c.charCodeAt(0));
     const key = await getCryptoKey();
-    const decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: raw.slice(0, 12) },
-      key,
-      raw.slice(12),
-    );
-
+    const decrypted = await decryptFromPackedString(payload, key);
+    if (!decrypted) return null;
     return new TextDecoder().decode(decrypted);
   } catch (e) {
     console.error("[SafeStorage] Decryption failed:", e);
