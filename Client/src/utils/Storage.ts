@@ -215,6 +215,39 @@ export const StorageService = {
     return base64.slice(start, end); // ✅ PURE BASE64
   },
 
+  readFile: async (fileName: string): Promise<string> => {
+    const isLocal = StorageService.isLocalSystemPath(fileName);
+    const path = isLocal ? fileName : `${VAULT_DIR}/${fileName}`;
+    const directory = isLocal ? undefined : Directory.Data;
+
+    try {
+      // Try reading from PROFILE_DIR first if it's a jpg
+      if (!isLocal && fileName.endsWith(".jpg")) {
+        try {
+          const file = await Filesystem.readFile({
+            path: `${PROFILE_DIR}/${fileName}`,
+            directory: Directory.Data,
+            encoding: Encoding.UTF8,
+          });
+          return typeof file.data === "string" ? file.data : "";
+        } catch (e) {
+          // Fallback to vault
+        }
+      }
+
+      const file = await Filesystem.readFile({
+        path,
+        directory,
+        encoding: Encoding.UTF8,
+      });
+
+      return typeof file.data === "string" ? file.data : "";
+    } catch (e) {
+      console.warn(`[Storage] readFile failed for ${fileName}`, e);
+      return "";
+    }
+  },
+
   deleteFile: async (fileName: string): Promise<void> => {
     try {
       if (!StorageService.isLocalSystemPath(fileName)) {

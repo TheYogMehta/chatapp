@@ -825,14 +825,16 @@ export class ChatClient extends EventEmitter {
               if (me.public_avatar) {
                 if (!me.public_avatar.startsWith("data:")) {
                   try {
-                    avatarBase64 = await StorageService.readChunk(
-                      me.public_avatar,
-                      0,
+                    console.log(
+                      `[ChatClient] Reading avatar file: ${me.public_avatar}`,
                     );
-                    const src = await StorageService.getFileSrc(
+                    const fileData = await StorageService.readFile(
                       me.public_avatar,
                     );
-                    avatarBase64 = src;
+                    avatarBase64 = fileData; // Assuming readFile returns base64
+                    console.log(
+                      `[ChatClient] Loaded avatar data, length: ${avatarBase64?.length}`,
+                    );
                   } catch (e) {
                     console.warn("Failed to load avatar file", e);
                   }
