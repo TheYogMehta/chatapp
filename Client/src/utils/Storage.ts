@@ -3,6 +3,7 @@ import { Capacitor } from "@capacitor/core";
 import { executeDB } from "../services/sqliteService";
 
 const VAULT_DIR = "chatapp_vault";
+const PROFILE_DIR = "chatapp_profiles";
 const CHUNK_SIZE = 64000;
 const writeLocks = new Map<string, boolean>();
 
@@ -28,6 +29,53 @@ export const StorageService = {
 
   isLocalSystemPath(fileName: string): boolean {
     return fileName.startsWith("/") || fileName.includes("://");
+  },
+
+  async saveProfileImage(data: string, identifier: string): Promise<string> {
+    const fileName = `${identifier}.jpg`;
+    const path = `${PROFILE_DIR}/${fileName}`;
+
+    // Ensure directory exists
+    try {
+      await Filesystem.mkdir({
+        path: PROFILE_DIR,
+        directory: Directory.Data,
+        recursive: true,
+      });
+    } catch (e) {
+      // Ignore if exists
+    }
+
+    // Overwrite existing
+    await Filesystem.writeFile({
+      path,
+      data,
+      directory: Directory.Data,
+      recursive: true,
+      encoding: Encoding.UTF8,
+    });
+
+    return fileName;
+  },
+
+  async getProfileImage(identifier: string): Promise<string | null> {
+    const fileName = `${identifier}.jpg`;
+    const path = `${PROFILE_DIR}/${fileName}`;
+
+    try {
+      const file = await Filesystem.readFile({
+        path,
+        directory: Directory.Data,
+        encoding: Encoding.UTF8,
+      });
+
+      const base64 = typeof file.data === "string" ? file.data : "";
+      if (!base64) return null;
+
+      return `data:image/jpeg;base64,${base64}`;
+    } catch (e) {
+      return null;
+    }
   },
 
   saveRawFile: async (
@@ -203,12 +251,40 @@ export const StorageService = {
           });
         }
       } else {
-        const file = await Filesystem.readFile({
-          path,
-          directory,
-          encoding: Encoding.UTF8,
-        });
-        base64Data = typeof file.data === "string" ? file.data : "";
+        // Try reading from PROFILE_DIR first if it looks like a profile image or just try both
+        // Profile images are forced to .jpg in saveProfileImage
+        if (fileName.endsWith(".jpg")) {
+          try {
+            const file = await Filesystem.readFile({
+              path: `${PROFILE_DIR}/${fileName}`,
+              directory: Directory.Data,
+              encoding: Encoding.UTF8,
+            });
+            base64Data = typeof file.data === "string" ? file.data : "";
+          } catch {
+            // Fallback to vault if not found (legacy or misnamed)
+            try {
+              const file = await Filesystem.readFile({
+                path, // VAULT_DIR path
+                directory,
+                encoding: Encoding.UTF8,
+              });
+              base64Data = typeof file.data === "string" ? file.data : "";
+            } catch (e) {
+              console.warn(
+                `[Storage] File not found in profile or vault: ${fileName}`,
+              );
+            }
+          }
+        } else {
+          // Standard vault file
+          const file = await Filesystem.readFile({
+            path,
+            directory,
+            encoding: Encoding.UTF8,
+          });
+          base64Data = typeof file.data === "string" ? file.data : "";
+        }
       }
 
       const ext = fileName.split(".").pop()?.toLowerCase();
