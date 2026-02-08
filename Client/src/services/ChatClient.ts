@@ -53,6 +53,7 @@ export class ChatClient extends EventEmitter {
   public currentLocalStream: MediaStream | null = null;
   private currentCallSid: string | null = null;
   private isMediaSettingUp: boolean = false;
+  private isResettingMedia: boolean = false;
   private micStream: MediaStream | null = null;
   private cameraStream: MediaStream | null = null;
   private screenStream: MediaStream | null = null;
@@ -850,6 +851,9 @@ export class ChatClient extends EventEmitter {
   private async resetMediaPlayback() {
     console.log("[ChatClient] Resetting MediaSource for new MIME type");
 
+    // Set flag to pause incoming stream processing
+    this.isResettingMedia = true;
+
     if (this.isMediaSettingUp) {
       console.log(
         "[ChatClient] resetMediaPlayback waiting for setup to finish...",
@@ -900,6 +904,12 @@ export class ChatClient extends EventEmitter {
 
     // Immediately recreate and wait for it to be ready
     await this.setupMediaPlayback();
+
+    // Resume incoming stream processing
+    this.isResettingMedia = false;
+    console.log(
+      "[ChatClient] MediaSource reset complete, ready for new stream",
+    );
   }
 
   private processQueue() {
@@ -936,6 +946,22 @@ export class ChatClient extends EventEmitter {
       if (!this.isCalling && !this.isCallConnected) {
         return;
       }
+
+      // Wait while MediaSource is being reset (during mode switch)
+      if (this.isResettingMedia) {
+        console.log(
+          "[ChatClient] handleStream: waiting for media reset to complete",
+        );
+        await new Promise<void>((resolve) => {
+          const check = setInterval(() => {
+            if (!this.isResettingMedia) {
+              clearInterval(check);
+              resolve();
+            }
+          }, 50);
+        });
+      }
+
       if (!this.remoteVideo) {
         console.log(
           "[ChatClient] handleStream: remoteVideo not ready, setting up",
@@ -1066,7 +1092,8 @@ export class ChatClient extends EventEmitter {
           });
           break;
         case "FILE_REQ_CHUNK":
-          await this.sendSingleChunk(sid, data.messageId, data.chunkIndex);
+          // Start streaming all chunks from the requested index
+          this.streamAllChunks(sid, data.messageId, data.chunkIndex);
           break;
         case "FILE_CHUNK":
           await this.handleFileChunk(sid, data);
@@ -1255,14 +1282,19 @@ export class ChatClient extends EventEmitter {
     }
   }
 
-  private async sendSingleChunk(
+  /**
+   * Stream all remaining chunks starting from chunkIndex.
+   * This is sender-push mode for faster file transfers.
+   */
+  private async streamAllChunks(
     sid: string,
     messageId: string,
-    chunkIndex: number,
+    startChunkIndex: number,
   ) {
     console.log(
-      `[Client] Processing FILE_REQ_CHUNK for ${messageId} index ${chunkIndex}`,
+      `[Client] Starting chunk stream for ${messageId} from index ${startChunkIndex}`,
     );
+
     const rows = await queryDB(
       "SELECT filename, file_size FROM media WHERE message_id = ?",
       [messageId],
@@ -1271,31 +1303,63 @@ export class ChatClient extends EventEmitter {
       console.error(`[Client] Media record not found for message ${messageId}`);
       return;
     }
+
     const { filename, file_size } = rows[0];
-    try {
-      const base64Chunk = await StorageService.readChunk(filename, chunkIndex);
-      if (!base64Chunk) {
-        console.error(`[Client] readChunk returned empty for ${filename}`);
+    const CHUNK_SIZE = 256000;
+    const totalChunks = Math.ceil(file_size / CHUNK_SIZE);
+
+    // Stream all chunks rapidly
+    for (
+      let chunkIndex = startChunkIndex;
+      chunkIndex < totalChunks;
+      chunkIndex++
+    ) {
+      try {
+        const base64Chunk = await StorageService.readChunk(
+          filename,
+          chunkIndex,
+        );
+        if (!base64Chunk) {
+          console.error(
+            `[Client] readChunk returned empty for ${filename} index ${chunkIndex}`,
+          );
+          return;
+        }
+
+        const isLast = chunkIndex === totalChunks - 1;
+        const payload = await this.encryptForSession(
+          sid,
+          JSON.stringify({
+            t: "FILE_CHUNK",
+            data: {
+              messageId,
+              chunkIndex,
+              payload: base64Chunk,
+              isLast,
+            },
+          }),
+        );
+        this.send({ t: "MSG", sid, data: { payload } });
+
+        // Small delay to prevent buffer overflow (5ms between chunks)
+        if (!isLast) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+
+        console.log(
+          `[Client] Streamed chunk ${
+            chunkIndex + 1
+          }/${totalChunks} for ${messageId}`,
+        );
+      } catch (e) {
+        console.error(`[Client] Failed to stream chunk ${chunkIndex}:`, e);
         return;
       }
-
-      const payload = await this.encryptForSession(
-        sid,
-        JSON.stringify({
-          t: "FILE_CHUNK",
-          data: {
-            messageId,
-            chunkIndex,
-            payload: base64Chunk,
-            isLast: (chunkIndex + 1) * 64000 >= file_size,
-          },
-        }),
-      );
-      this.send({ t: "MSG", sid, data: { payload } });
-      console.log(`[Client] Sent chunk ${chunkIndex} for ${messageId}`);
-    } catch (e) {
-      console.error(`[Client] Failed to send chunk ${chunkIndex}:`, e);
     }
+
+    console.log(
+      `[Client] Finished streaming all ${totalChunks} chunks for ${messageId}`,
+    );
   }
 
   private async handleFileChunk(sid: string, data: any) {
@@ -1308,7 +1372,7 @@ export class ChatClient extends EventEmitter {
     const { filename, file_size } = rows[0];
     await StorageService.appendChunk(filename, payload);
 
-    const currentSize = Math.min((chunkIndex + 1) * 64000, file_size);
+    const currentSize = Math.min((chunkIndex + 1) * 256000, file_size);
     const progress = currentSize / file_size;
 
     await executeDB(
@@ -1326,7 +1390,7 @@ export class ChatClient extends EventEmitter {
       );
       this.emit("file_downloaded", { messageId });
     } else {
-      await this.requestDownload(sid, messageId, chunkIndex + 1);
+      // Sender-push mode: sender streams all chunks, no need to request next
       this.emit("download_progress", { messageId, progress });
     }
   }

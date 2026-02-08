@@ -4,7 +4,7 @@ import { executeDB } from "../services/sqliteService";
 
 const VAULT_DIR = "chatapp_vault";
 const PROFILE_DIR = "chatapp_profiles";
-const CHUNK_SIZE = 64000;
+const CHUNK_SIZE = 256000; // 256KB for faster transfers
 const writeLocks = new Map<string, boolean>();
 
 export const StorageService = {
