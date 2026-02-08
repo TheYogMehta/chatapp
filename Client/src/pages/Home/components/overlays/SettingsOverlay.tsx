@@ -161,7 +161,9 @@ export const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
       !avatarSrc.startsWith("data:") &&
       !avatarSrc.startsWith("http")
     ) {
-      avatarSrc = await StorageService.getFileSrc(avatarSrc);
+      avatarSrc = await StorageService.getProfileImage(
+        avatarSrc.replace(/\.jpg$/, ""),
+      );
     }
 
     setEditAvatar(avatarSrc);

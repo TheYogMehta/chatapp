@@ -108,9 +108,11 @@ export const ChatWindow = ({
   useEffect(() => {
     let active = true;
     if (avatarToUse && !avatarToUse.startsWith("data:")) {
-      StorageService.getFileSrc(avatarToUse).then((src) => {
-        if (active) setResolvedAvatar(src);
-      });
+      StorageService.getProfileImage(avatarToUse.replace(/\.jpg$/, "")).then(
+        (src) => {
+          if (active) setResolvedAvatar(src || undefined);
+        },
+      );
     } else {
       if (active) setResolvedAvatar(avatarToUse);
     }

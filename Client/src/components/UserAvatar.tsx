@@ -20,9 +20,11 @@ const UserAvatar: React.FC<{
     if (avatarUrl.startsWith("data:") || avatarUrl.startsWith("http")) {
       setSrc(avatarUrl);
     } else {
-      StorageService.getFileSrc(avatarUrl).then((s) => {
-        if (active) setSrc(s);
-      });
+      StorageService.getProfileImage(avatarUrl.replace(/\.jpg$/, "")).then(
+        (s) => {
+          if (active) setSrc(s);
+        },
+      );
     }
     return () => {
       active = false;

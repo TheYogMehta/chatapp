@@ -46,9 +46,11 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
   useEffect(() => {
     let active = true;
     if (avatarUrl && !avatarUrl.startsWith("data:")) {
-      StorageService.getFileSrc(avatarUrl).then((src) => {
-        if (active) setResolvedAvatar(src);
-      });
+      StorageService.getProfileImage(avatarUrl.replace(/\.jpg$/, "")).then(
+        (src) => {
+          if (active) setResolvedAvatar(src || undefined);
+        },
+      );
     } else {
       if (active) setResolvedAvatar(avatarUrl);
     }
