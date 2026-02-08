@@ -265,12 +265,49 @@ export const StorageService = {
       const path = isLocal ? fileName : `${VAULT_DIR}/${fileName}`;
       const directory = isLocal ? undefined : Directory.Data;
 
+      // Optimization: For native platforms (Android/iOS), use the native file URL
+      if (Capacitor.getPlatform() === 'android' || Capacitor.getPlatform() === 'ios') {
+        try {
+          let uriResult;
+          // Check for profile images in special dir
+          if (fileName.endsWith(".jpg") && !isLocal) {
+            try {
+              uriResult = await Filesystem.getUri({
+                path: `${PROFILE_DIR}/${fileName}`,
+                directory: Directory.Data,
+              });
+            } catch {
+              // Fallback to vault
+              uriResult = await Filesystem.getUri({
+                path,
+                directory: Directory.Data
+              });
+            }
+          } else if (!isLocal) {
+            // Only attempt getUri if we have a valid directory (not local path)
+            uriResult = await Filesystem.getUri({
+              path,
+              directory: Directory.Data
+            });
+          }
+
+          if (uriResult && uriResult.uri) {
+            return Capacitor.convertFileSrc(uriResult.uri);
+          }
+        } catch (e) {
+          console.warn("[Storage] getUri failed, falling back to read", e);
+        }
+      }
+
+      // Fallback for Web/Electron or if getUri fails
       let base64Data = "";
 
       if (isLocal) {
         const file = await Filesystem.readFile({ path, directory });
-        base64Data = typeof file.data === "string" ? file.data : "";
-        if (file.data instanceof Blob) {
+
+        if (typeof file.data === "string") {
+          base64Data = file.data;
+        } else if (file.data instanceof Blob) {
           base64Data = await new Promise((resolve) => {
             const reader = new FileReader();
             reader.onloadend = () => {
@@ -281,29 +318,31 @@ export const StorageService = {
           });
         }
       } else {
-        if (fileName.endsWith(".jpg")) {
-          try {
-            const file = await Filesystem.readFile({
-              path: `${PROFILE_DIR}/${fileName}`,
-              directory: Directory.Data,
-              encoding: Encoding.UTF8,
-            });
-            base64Data = typeof file.data === "string" ? file.data : "";
-          } catch {
+        try {
+          // Check if it's a profile image
+          if (fileName.endsWith(".jpg")) {
             try {
               const file = await Filesystem.readFile({
-                path,
-                directory,
-                encoding: Encoding.UTF8,
+                path: `${PROFILE_DIR}/${fileName}`,
+                directory: Directory.Data,
               });
-              base64Data = typeof file.data === "string" ? file.data : "";
+              if (file.data) {
+                base64Data = typeof file.data === "string" ? file.data : "";
+              }
             } catch (e) {
-              console.warn(
-                `[Storage] File not found in profile or vault: ${fileName}`,
-              );
+              // ignore
             }
           }
-        } else {
+
+          if (!base64Data) {
+            const file = await Filesystem.readFile({
+              path,
+              directory,
+            });
+            base64Data = typeof file.data === "string" ? file.data : "";
+          }
+        } catch (e) {
+          console.warn(`[Storage] Binary read failed for ${fileName}, trying UTF8 fallback`, e);
           const file = await Filesystem.readFile({
             path,
             directory,
@@ -333,77 +372,14 @@ export const StorageService = {
         mime = "audio/webm";
       }
 
-      if (isLocal) {
-        const file = await Filesystem.readFile({ path, directory });
-        let base64Data = "";
-
-        if (typeof file.data === "string") {
-          base64Data = file.data;
-        } else if (file.data instanceof Blob) {
-          base64Data = await new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-              const res = reader.result as string;
-              resolve(res.includes(",") ? res.split(",")[1] : res);
-            };
-            reader.readAsDataURL(file.data as Blob);
-          });
-        }
-
-        if (!base64Data) {
-          console.error(`[Storage] Empty data for local file ${fileName}`);
-          return "";
-        }
-        return `data:${mime};base64,${base64Data}`;
-      } else {
-        // For vault files, try reading without encoding first (for binary)
-        // If that fails or returns empty, try with encoding (legacy fallback)
-        try {
-          // Check if it's a profile image
-          if (fileName.endsWith(".jpg")) {
-            try {
-              const file = await Filesystem.readFile({
-                path: `${PROFILE_DIR}/${fileName}`,
-                directory: Directory.Data,
-                // No encoding for binary
-              });
-              if (file.data) {
-                return `data:${mime};base64,${file.data}`;
-              }
-            } catch (e) {
-              // ignore
-            }
-          }
-
-          const file = await Filesystem.readFile({
-            path,
-            directory,
-            // No encoding for binary
-          });
-
-          if (file.data) {
-            return `data:${mime};base64,${file.data}`;
-          }
-        } catch (e) {
-          console.warn(
-            `[Storage] Binary read failed for ${fileName}, trying UTF8 fallback`,
-            e,
-          );
-          // Fallback to UTF8
-          const file = await Filesystem.readFile({
-            path,
-            directory,
-            encoding: Encoding.UTF8,
-          });
-          if (file.data) {
-            return `data:${mime};base64,${file.data}`;
-          }
-        }
+      if (!base64Data) {
+        console.error(`[Storage] Empty data for ${fileName}`);
+        return "";
       }
 
-      return "";
+      return `data:${mime};base64,${base64Data}`;
     } catch (e) {
-      console.error("Failed to get file src (base64):", e);
+      console.error("Failed to get file src:", e);
       return "";
     }
   },
