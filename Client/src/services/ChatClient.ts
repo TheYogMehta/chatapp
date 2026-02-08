@@ -51,6 +51,7 @@ export class ChatClient extends EventEmitter {
   private callStartTime: number = 0;
   private remoteMimeType: string | null = null;
   public currentLocalStream: MediaStream | null = null;
+  private currentCallSid: string | null = null;
 
   private ringtoneInterval: any = null;
   private pendingCallMode: "Audio" | "Video" | "Screen" | null = null;
@@ -324,6 +325,7 @@ export class ChatClient extends EventEmitter {
 
     try {
       this.isCalling = true;
+      this.currentCallSid = sid;
       console.log("[ChatClient] startCall: Sending invite to", sid);
 
       // Do not start streaming yet (privacy/late media)
@@ -534,6 +536,7 @@ export class ChatClient extends EventEmitter {
 
     try {
       this.isCalling = true;
+      this.currentCallSid = sid;
       const mimeType = await this.startStreaming(sid, "Audio");
       const payload = await this.encryptForSession(
         sid,
@@ -604,6 +607,26 @@ export class ChatClient extends EventEmitter {
     this.remoteMimeType = null;
     this.currentLocalStream = null;
     this.emit("local_stream_ready", null);
+  }
+
+  public toggleMic() {
+    if (this.mediaRecorder && this.mediaRecorder.stream) {
+      let isMuted = false;
+      this.mediaRecorder.stream.getAudioTracks().forEach((track) => {
+        track.enabled = !track.enabled;
+        isMuted = !track.enabled;
+      });
+
+      if (this.currentCallSid) {
+        this.send({
+          t: "MIC_STATUS",
+          sid: this.currentCallSid,
+          data: { muted: isMuted },
+        });
+      }
+      return isMuted;
+    }
+    return true;
   }
 
   private async setupMediaPlayback(): Promise<void> {
@@ -794,6 +817,9 @@ export class ChatClient extends EventEmitter {
           console.log(`[ChatClient] Received MIME_CHANGE: ${data.mimeType}`);
           this.remoteMimeType = data.mimeType;
           await this.resetMediaPlayback();
+          break;
+        case "MIC_STATUS":
+          this.emit("peer_mic_status", { sid, muted: data.muted });
           break;
         case "MSG":
           try {

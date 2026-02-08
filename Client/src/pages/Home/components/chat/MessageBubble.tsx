@@ -12,7 +12,7 @@ import {
   Reply,
   Globe,
   Check,
-  CheckCheck
+  CheckCheck,
 } from "lucide-react";
 import {
   BubbleWrapper,
@@ -94,7 +94,10 @@ const AudioPlayer = ({
       ) : null}
 
       <AudioControls isMe={isMe}>
-        <PlayPauseBtn isMe={isMe} onClick={isDownloaded ? togglePlay : onDownload}>
+        <PlayPauseBtn
+          isMe={isMe}
+          onClick={isDownloaded ? togglePlay : onDownload}
+        >
           {!isDownloaded ? (
             isDownloading ? (
               <span style={{ fontSize: "10px", fontWeight: "bold" }}>
@@ -122,9 +125,7 @@ const AudioPlayer = ({
         </WaveformContainer>
 
         {isDownloaded && (
-          <SpeedButton onClick={handleSpeed}>
-            {speed}x
-          </SpeedButton>
+          <SpeedButton onClick={handleSpeed}>{speed}x</SpeedButton>
         )}
       </AudioControls>
 
@@ -134,8 +135,8 @@ const AudioPlayer = ({
           {isDownloaded
             ? formatTime(duration)
             : isDownloading
-              ? "Downloading..."
-              : "Voice Note"}
+            ? "Downloading..."
+            : "Voice Note"}
         </span>
       </AudioTimeInfo>
 
@@ -248,11 +249,14 @@ export const MessageBubble = ({
               onClick={() => window.open(imageSrc || msg.tempUrl, "_blank")}
               onError={(e) => {
                 console.error(
-                  `[MessageBubble] Image load failed. ID=${msg.id}`
+                  `[MessageBubble] Image load failed. ID=${msg.id}`,
                 );
                 e.currentTarget.style.display = "none";
               }}
-              style={{ cursor: "pointer", opacity: msg.mediaStatus === "uploading" ? 0.7 : 1 }}
+              style={{
+                cursor: "pointer",
+                opacity: msg.mediaStatus === "uploading" ? 0.7 : 1,
+              }}
             />
             <MediaActionBtn
               onClick={(e) => {
@@ -395,7 +399,12 @@ export const MessageBubble = ({
           {isDownloaded ? (
             <button
               onClick={handleSave}
-              style={{ border: "none", background: "none", cursor: "pointer", opacity: 0.8 }}
+              style={{
+                border: "none",
+                background: "none",
+                cursor: "pointer",
+                opacity: 0.8,
+              }}
             >
               <Save size={20} />
             </button>
@@ -403,7 +412,12 @@ export const MessageBubble = ({
             !isDownloading && (
               <button
                 onClick={handleDownload}
-                style={{ border: "none", background: "none", cursor: "pointer", opacity: 0.8 }}
+                style={{
+                  border: "none",
+                  background: "none",
+                  cursor: "pointer",
+                  opacity: 0.8,
+                }}
               >
                 <Download size={20} />
               </button>
@@ -464,7 +478,11 @@ export const MessageBubble = ({
   const isValidDate = (d: any) => d instanceof Date && !isNaN(d.getTime());
   const safeDate = new Date(msg.timestamp);
   const timeString = isValidDate(safeDate)
-    ? safeDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    ? safeDate.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      })
     : "";
 
   return (
@@ -593,16 +611,22 @@ export const MessageBubble = ({
         ) : (
           renderMediaContent() || (
             <div style={{ whiteSpace: "pre-wrap", overflowWrap: "break-word" }}>
-              {msg.text && (
+              {msg.text &&
                 // Basic link detection
-                msg.text.split(/(https?:\/\/[^\s]+)/g).map((part, i) => (
+                msg.text.split(/(https?:\/\/[^\s]+)/g).map((part, i) =>
                   part.match(/https?:\/\//) ? (
-                    <a key={i} href={part} target="_blank" rel="noopener noreferrer">
+                    <a
+                      key={i}
+                      href={part}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
                       {part}
                     </a>
-                  ) : part
-                ))
-              )}
+                  ) : (
+                    part
+                  ),
+                )}
             </div>
           )
         )}

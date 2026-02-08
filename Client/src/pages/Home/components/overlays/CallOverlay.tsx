@@ -272,22 +272,52 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
               }}
             >
               <AvatarContainer style={{ width: 150, height: 150 }}>
-                {callState.remoteSid?.[0]?.toUpperCase()}
+                {callState.peerAvatar ? (
+                  <img
+                    src={callState.peerAvatar}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                    }}
+                  />
+                ) : (
+                  callState.peerName?.[0]?.toUpperCase() ||
+                  callState.remoteSid?.[0]?.toUpperCase() || <User size={48} />
+                )}
               </AvatarContainer>
               <CallerName style={{ fontSize: 24, marginBottom: 0 }}>
                 {callState.peerName ||
                   `Peer ${callState.remoteSid?.slice(0, 6)}`}
               </CallerName>
-              <CallStatus style={{ color: "#94a3b8" }}>
+              <CallStatus
+                style={{
+                  color: "#94a3b8",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                }}
+              >
                 {formatTime(duration)} • Voice Call
+                {callState.peerMicMuted && <MicOff size={16} color="red" />}
               </CallStatus>
             </div>
           )}
         </MainVideoArea>
 
         <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <CallerName style={{ color: "white", marginBottom: 8 }}>
-            Peer {callState.remoteSid?.slice(0, 6)}
+          <CallerName
+            style={{
+              color: "white",
+              marginBottom: 8,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "10px",
+            }}
+          >
+            {callState.peerName || `Peer ${callState.remoteSid?.slice(0, 6)}`}
+            {callState.peerMicMuted && <MicOff size={16} color="red" />}
           </CallerName>
           <CallStatus style={{ color: "#94a3b8" }}>
             {formatTime(duration)} • Connected
