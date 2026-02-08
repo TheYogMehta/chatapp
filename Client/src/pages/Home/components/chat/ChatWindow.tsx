@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useLayoutEffect } from "react";
 import { StorageService } from "../../../../utils/Storage";
 import { MessageBubble } from "./MessageBubble";
 import { PortShareModal } from "./PortShareModal";
+import { MediaModal } from "./MediaModal";
 import {
   Send,
   Mic,
@@ -84,6 +85,13 @@ export const ChatWindow = ({
   const [showPortModal, setShowPortModal] = useState(false);
   const [port, setPort] = useState("");
   const [isRecording, setIsRecording] = useState(false);
+  const [mediaModalOpen, setMediaModalOpen] = useState(false);
+  const [selectedMedia, setSelectedMedia] = useState<{
+    url: string;
+    type: "image" | "video";
+    description?: string;
+  } | null>(null);
+
   const prevHeightRef = useRef(0);
   const prevFirstMsgIdRef = useRef<string | null>(null);
   const prevActiveChatRef = useRef<string | null>(null);
@@ -272,6 +280,11 @@ export const ChatWindow = ({
     }
   };
 
+  const handleMediaClick = (url: string, type: "image" | "video", description?: string) => {
+    setSelectedMedia({ url, type, description });
+    setMediaModalOpen(true);
+  };
+
   return (
     <ChatContainer>
       <ChatHeader>
@@ -324,7 +337,12 @@ export const ChatWindow = ({
 
       <MessageList ref={scrollRef} onScroll={handleScroll}>
         {messages.map((msg, i) => (
-          <MessageBubble key={i} msg={msg} onReply={setReplyingTo} />
+          <MessageBubble
+            key={i}
+            msg={msg}
+            onReply={setReplyingTo}
+            onMediaClick={handleMediaClick}
+          />
         ))}
       </MessageList>
 
@@ -431,6 +449,12 @@ export const ChatWindow = ({
           setShowPortModal(false);
           setShowMenu(false);
         }}
+      />
+
+      <MediaModal
+        isOpen={mediaModalOpen}
+        onClose={() => setMediaModalOpen(false)}
+        media={selectedMedia}
       />
     </ChatContainer>
   );
