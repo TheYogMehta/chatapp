@@ -214,6 +214,11 @@ export const useChatLogic = () => {
         prev ? { ...prev, iceStatus: status } : null,
       ),
     );
+    client.on("call_mode_changed", ({ sid, mode }) => {
+      setActiveCall((prev: any) =>
+        prev && prev.sid === sid ? { ...prev, type: mode } : prev,
+      );
+    });
     client.on("remote_stream_ready", onRemoteStream);
     client.on("call_ended", async (data: any) => {
       setActiveCall(null);
@@ -423,8 +428,13 @@ export const useChatLogic = () => {
       switchStream: (mode: any) =>
         ChatClient.switchStream(activeCall.sid, mode),
       acceptCall: () => ChatClient.acceptCall(activeCall.sid),
-      rejectCall: () => ChatClient.endCall(activeCall.sid),
-      endCall: () => ChatClient.endCall(activeCall.sid),
+      rejectCall: () => {
+        if (activeCall) ChatClient.endCall(activeCall.sid);
+      },
+      endCall: () => {
+        if (activeCall) ChatClient.endCall(activeCall.sid);
+        else ChatClient.endCall(); // Try to end current call even if state is lost
+      },
       clearNotification: () => setNotification(null),
       loadMoreHistory,
       handleSetAlias: async (sid: string, name: string) => {

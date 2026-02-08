@@ -52,6 +52,15 @@ export class ChatClient extends EventEmitter {
   private remoteMimeType: string | null = null;
   public currentLocalStream: MediaStream | null = null;
   private currentCallSid: string | null = null;
+  private isMediaSettingUp: boolean = false;
+  private micStream: MediaStream | null = null;
+  private cameraStream: MediaStream | null = null;
+  private screenStream: MediaStream | null = null;
+  private combinedStream: MediaStream | null = null;
+  private audioDestination: MediaStreamAudioDestinationNode | null = null;
+  public isMicEnabled: boolean = true;
+  public isVideoEnabled: boolean = false;
+  public isScreenEnabled: boolean = false;
 
   private ringtoneInterval: any = null;
   private pendingCallMode: "Audio" | "Video" | "Screen" | null = null;
@@ -337,8 +346,24 @@ export class ChatClient extends EventEmitter {
       this.send({ t: "MSG", sid, data: { payload } });
 
       this.emit("call_outgoing", { sid, type: mode, remoteSid: sid });
+
+      setTimeout(() => {
+        if (
+          this.isCalling &&
+          !this.isCallConnected &&
+          this.currentCallSid === sid
+        ) {
+          console.warn("[ChatClient] Call timed out, cleaning up");
+          this.emit("notification", {
+            type: "error",
+            message: "Call timed out",
+          });
+          this.endCall(sid);
+        }
+      }, 45000);
     } catch (err: any) {
       this.isCalling = false;
+      this.currentCallSid = null;
       this.pendingCallMode = null;
       console.error("Error starting call:", err);
       this.emit("notification", {
@@ -354,14 +379,14 @@ export class ChatClient extends EventEmitter {
     console.log(`[ChatClient] Switching stream to ${mode}`);
 
     try {
-      if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
-        this.mediaRecorder.stream.getTracks().forEach((t) => t.stop());
-        this.mediaRecorder.stop();
+      if (mode === "Video") {
+        await this.toggleVideo(true);
+      } else if (mode === "Screen") {
+        await this.toggleScreenShare(true);
+      } else {
+        await this.toggleVideo(false);
+        await this.toggleScreenShare(false);
       }
-
-      const newMime = await this.startStreaming(sid, mode);
-
-      this.send({ t: "MIME_CHANGE", sid, data: { mimeType: newMime } });
     } catch (err: any) {
       console.error("Failed to switch stream:", err);
       this.emit("notification", {
@@ -371,161 +396,240 @@ export class ChatClient extends EventEmitter {
     }
   }
 
-  private async startStreaming(
-    sid: string,
-    mode: "Audio" | "Video" | "Screen" = "Audio",
-  ): Promise<string> {
+  private async initializeCallStream(sid: string): Promise<string> {
     try {
-      let stream: MediaStream;
-      let mimeType = "audio/webm;codecs=opus";
-      let bitsPerSecond = 48000;
+      this.micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
 
-      if (mode === "Screen") {
-        const isElectron =
-          (window as any).electron &&
-          (window as any).electron.getDesktopSources;
+      this.audioContext = new AudioContext();
+      this.audioDestination = this.audioContext.createMediaStreamDestination();
 
-        if (isElectron) {
-          try {
-            const sources = await (window as any).electron.getDesktopSources();
-            console.log(
-              "[ChatClient] Desktop sources available:",
-              sources.map((s: any) => s.name),
-            );
+      const micSource = this.audioContext.createMediaStreamSource(
+        this.micStream,
+      );
+      micSource.connect(this.audioDestination);
 
-            const source = sources[0];
-            if (!source) {
-              throw new Error("No screen sources found.");
-            }
+      this.combinedStream = new MediaStream();
+      this.audioDestination.stream.getAudioTracks().forEach((track) => {
+        this.combinedStream!.addTrack(track);
+      });
 
-            console.log(
-              `[ChatClient] Selecting source: ${source.name} (${source.id})`,
-            );
+      return await this.startMediaRecorder(sid);
+    } catch (e) {
+      console.error("Error initializing call stream", e);
+      this.emit("notification", {
+        type: "error",
+        message: "Microphone error: " + e,
+      });
+      throw e;
+    }
+  }
 
-            stream = await navigator.mediaDevices.getUserMedia({
-              audio: false,
-              video: {
-                mandatory: {
-                  chromeMediaSource: "desktop",
-                  chromeMediaSourceId: source.id,
-                  minWidth: 1280,
-                  maxWidth: 1920,
-                  minHeight: 720,
-                  maxHeight: 1080,
-                },
-              },
-            } as any);
-          } catch (e: any) {
-            console.error("[ChatClient] Electron screen share error:", e);
-            throw new Error(
-              "Failed to capture screen in Electron: " + (e.message || e),
-            );
-          }
-        } else if (
-          navigator.mediaDevices &&
-          navigator.mediaDevices.getDisplayMedia
-        ) {
-          try {
-            stream = await navigator.mediaDevices.getDisplayMedia({
-              video: true,
-              audio: true,
-            });
-          } catch (e: any) {
-            if (e.name === "NotAllowedError") {
-              throw new Error("Screen sharing permission denied.");
-            }
-            throw e;
-          }
-        } else {
-          // Fallback for environments without getDisplayMedia
-          throw new Error(
-            "Screen sharing is not supported on this device/browser.",
-          );
+  public async toggleVideo(enable?: boolean): Promise<void> {
+    const shouldEnable = enable !== undefined ? enable : !this.isVideoEnabled;
+    const sid = this.currentCallSid;
+    if (!sid || !this.isCalling) return;
+
+    try {
+      if (shouldEnable) {
+        if (this.isScreenEnabled) {
+          await this.toggleScreenShare(false);
         }
-        mimeType = "video/webm;codecs=vp8,opus";
-        bitsPerSecond = 2500000;
-      } else if (mode === "Video") {
-        stream = await navigator.mediaDevices.getUserMedia({
+
+        this.cameraStream = await navigator.mediaDevices.getUserMedia({
           video: {
             width: { ideal: 640 },
             height: { ideal: 480 },
             frameRate: { ideal: 15 },
           },
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-          },
+          audio: false,
         });
-        mimeType = "video/webm;codecs=vp8,opus";
-        bitsPerSecond = 1000000;
+
+        this.isVideoEnabled = true;
+        console.log("[ChatClient] Video enabled");
       } else {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
-        mimeType = "audio/webm;codecs=opus";
-        bitsPerSecond = 48000;
+        if (this.cameraStream) {
+          this.cameraStream.getTracks().forEach((t) => t.stop());
+          this.cameraStream = null;
+        }
+        this.isVideoEnabled = false;
+        console.log("[ChatClient] Video disabled");
       }
 
-      console.log("[ChatClient] startStreaming: Got local stream", stream.id);
-
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        console.warn(`[ChatClient] ${mimeType} not supported, trying fallback`);
-        if (mode !== "Audio" && MediaRecorder.isTypeSupported("video/webm")) {
-          mimeType = "video/webm";
-        } else if (MediaRecorder.isTypeSupported("video/mp4")) {
-          mimeType = "video/mp4";
-        }
-      }
-
-      this.mediaRecorder = new MediaRecorder(stream, {
-        mimeType,
-        bitsPerSecond,
-      });
-
-      this.currentLocalStream = stream;
-
-      this.emit("local_stream_ready", stream);
-
-      this.mediaRecorder.ondataavailable = async (e) => {
-        if (e.data.size > 0) {
-          try {
-            const buffer = await e.data.arrayBuffer();
-            const encrypted = await this.encryptForSession(sid, buffer);
-            this.send({ t: "STREAM", sid, data: encrypted });
-          } catch (err) {
-            console.error("Encryption streaming error:", err);
-          }
-        }
-      };
-
-      this.mediaRecorder.onstop = () => {
-        console.log("MediaRecorder stopped");
-      };
-
-      this.mediaRecorder.onerror = (e: any) => {
-        console.error("MediaRecorder error:", e);
-      };
-
-      stream.getTracks().forEach((track) => {
-        track.onended = () => {
-          console.log(`[ChatClient] Local stream track ended: ${track.kind}`);
-        };
-      });
-
-      this.mediaRecorder.start(100);
-      return mimeType;
-    } catch (e) {
-      console.error("Error starting stream", e);
+      await this.rebuildCombinedStream(sid);
+      this.emit("local_stream_ready", this.combinedStream);
+      this.emit("video_toggled", { enabled: this.isVideoEnabled });
+    } catch (e: any) {
+      console.error("Error toggling video:", e);
       this.emit("notification", {
         type: "error",
-        message: "Microphone/Camera error: " + e,
+        message: "Camera error: " + e.message,
       });
-      throw e;
     }
+  }
+
+  public async toggleScreenShare(enable?: boolean): Promise<void> {
+    const shouldEnable = enable !== undefined ? enable : !this.isScreenEnabled;
+    const sid = this.currentCallSid;
+    if (!sid || !this.isCalling) return;
+
+    try {
+      if (shouldEnable) {
+        if (this.isVideoEnabled) {
+          await this.toggleVideo(false);
+        }
+
+        const isElectron =
+          (window as any).electron &&
+          (window as any).electron.getDesktopSources;
+
+        if (isElectron) {
+          const sources = await (window as any).electron.getDesktopSources();
+          const source = sources[0];
+          if (!source) throw new Error("No screen sources found.");
+
+          this.screenStream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+              mandatory: {
+                chromeMediaSource: "desktop",
+                chromeMediaSourceId: source.id,
+                minWidth: 1280,
+                maxWidth: 1920,
+                minHeight: 720,
+                maxHeight: 1080,
+              },
+            },
+          } as any);
+        } else if (navigator.mediaDevices?.getDisplayMedia) {
+          this.screenStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: true,
+          });
+
+          if (this.audioContext && this.audioDestination) {
+            const screenAudioTracks = this.screenStream.getAudioTracks();
+            if (screenAudioTracks.length > 0) {
+              const screenAudioStream = new MediaStream(screenAudioTracks);
+              const screenSource =
+                this.audioContext.createMediaStreamSource(screenAudioStream);
+              screenSource.connect(this.audioDestination);
+            }
+          }
+        } else {
+          throw new Error("Screen sharing not supported on this device.");
+        }
+
+        this.screenStream.getVideoTracks().forEach((track) => {
+          track.onended = () => {
+            console.log("[ChatClient] Screen share ended by user");
+            this.toggleScreenShare(false);
+          };
+        });
+
+        this.isScreenEnabled = true;
+        console.log("[ChatClient] Screen share enabled");
+      } else {
+        if (this.screenStream) {
+          this.screenStream.getTracks().forEach((t) => t.stop());
+          this.screenStream = null;
+        }
+        this.isScreenEnabled = false;
+        console.log("[ChatClient] Screen share disabled");
+      }
+
+      await this.rebuildCombinedStream(sid);
+      this.emit("local_stream_ready", this.combinedStream);
+      this.emit("screen_toggled", { enabled: this.isScreenEnabled });
+    } catch (e: any) {
+      console.error("Error toggling screen share:", e);
+      this.emit("notification", {
+        type: "error",
+        message: "Screen share error: " + e.message,
+      });
+    }
+  }
+
+  private async rebuildCombinedStream(sid: string): Promise<void> {
+    if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
+      this.mediaRecorder.stop();
+    }
+
+    this.combinedStream = new MediaStream();
+
+    if (this.audioDestination) {
+      this.audioDestination.stream.getAudioTracks().forEach((track) => {
+        this.combinedStream!.addTrack(track.clone());
+      });
+    }
+
+    if (this.isVideoEnabled && this.cameraStream) {
+      this.cameraStream.getVideoTracks().forEach((track) => {
+        this.combinedStream!.addTrack(track);
+      });
+    } else if (this.isScreenEnabled && this.screenStream) {
+      this.screenStream.getVideoTracks().forEach((track) => {
+        this.combinedStream!.addTrack(track);
+      });
+    }
+
+    this.currentLocalStream = this.combinedStream;
+
+    const mimeType = await this.startMediaRecorder(sid);
+    this.send({ t: "MIME_CHANGE", sid, data: { mimeType } });
+  }
+
+  private async startMediaRecorder(sid: string): Promise<string> {
+    if (!this.combinedStream) throw new Error("No combined stream");
+
+    const hasVideo = this.combinedStream.getVideoTracks().length > 0;
+    let mimeType = hasVideo
+      ? "video/webm;codecs=vp8,opus"
+      : "audio/webm;codecs=opus";
+    let bitsPerSecond = hasVideo ? 1000000 : 48000;
+
+    if (!MediaRecorder.isTypeSupported(mimeType)) {
+      console.warn(`[ChatClient] ${mimeType} not supported, trying fallback`);
+      if (hasVideo && MediaRecorder.isTypeSupported("video/webm")) {
+        mimeType = "video/webm";
+      } else if (MediaRecorder.isTypeSupported("video/mp4")) {
+        mimeType = "video/mp4";
+      }
+    }
+
+    this.mediaRecorder = new MediaRecorder(this.combinedStream, {
+      mimeType,
+      bitsPerSecond,
+    });
+
+    this.mediaRecorder.ondataavailable = async (e) => {
+      if (e.data.size > 0) {
+        try {
+          const buffer = await e.data.arrayBuffer();
+          const encrypted = await this.encryptForSession(sid, buffer);
+          this.send({ t: "STREAM", sid, data: encrypted });
+        } catch (err) {
+          console.error("Encryption streaming error:", err);
+        }
+      }
+    };
+
+    this.mediaRecorder.onstop = () => {
+      console.log("MediaRecorder stopped");
+    };
+
+    this.mediaRecorder.onerror = (e: any) => {
+      console.error("MediaRecorder error:", e);
+    };
+
+    this.mediaRecorder.start(100);
+    console.log(`[ChatClient] MediaRecorder started with ${mimeType}`);
+    return mimeType;
   }
 
   public async acceptCall(sid: string) {
@@ -537,7 +641,7 @@ export class ChatClient extends EventEmitter {
     try {
       this.isCalling = true;
       this.currentCallSid = sid;
-      const mimeType = await this.startStreaming(sid, "Audio");
+      const mimeType = await this.initializeCallStream(sid);
       const payload = await this.encryptForSession(
         sid,
         JSON.stringify({ t: "CALL_ACCEPT", data: { mimeType } }),
@@ -559,30 +663,64 @@ export class ChatClient extends EventEmitter {
     }
   }
 
-  public async endCall(sid: string) {
+  public async endCall(sid?: string) {
+    const targetSid = sid || this.currentCallSid;
+    if (!targetSid) return;
+
     const payload = await this.encryptForSession(
-      sid,
+      targetSid,
       JSON.stringify({ t: "CALL_END" }),
     );
-    this.send({ t: "MSG", sid, data: { payload } });
+    this.send({ t: "MSG", sid: targetSid, data: { payload } });
     const wasConnected = this.isCallConnected;
     this.cleanupCall();
     const duration = Date.now() - this.callStartTime;
-    this.emit("call_ended", { sid, duration, connected: wasConnected });
+    this.emit("call_ended", {
+      sid: targetSid,
+      duration,
+      connected: wasConnected,
+    });
   }
 
   private cleanupCall() {
     this.stopRingtone();
     this.isCalling = false;
+    this.currentCallSid = null;
     this.pendingCallMode = null;
     this.isCallConnected = false;
     if (this.mediaRecorder) {
       if (this.mediaRecorder.state !== "inactive") {
-        this.mediaRecorder.stream.getTracks().forEach((t) => t.stop());
         this.mediaRecorder.stop();
       }
       this.mediaRecorder = null;
     }
+
+    if (this.micStream) {
+      this.micStream.getTracks().forEach((t) => t.stop());
+      this.micStream = null;
+    }
+    if (this.cameraStream) {
+      this.cameraStream.getTracks().forEach((t) => t.stop());
+      this.cameraStream = null;
+    }
+    if (this.screenStream) {
+      this.screenStream.getTracks().forEach((t) => t.stop());
+      this.screenStream = null;
+    }
+    if (this.combinedStream) {
+      this.combinedStream.getTracks().forEach((t) => t.stop());
+      this.combinedStream = null;
+    }
+    if (this.audioContext) {
+      this.audioContext.close().catch(() => {});
+      this.audioContext = null;
+    }
+    this.audioDestination = null;
+
+    this.isMicEnabled = true;
+    this.isVideoEnabled = false;
+    this.isScreenEnabled = false;
+
     if (this.remoteAudio) {
       if (this.remoteAudio.src) {
         URL.revokeObjectURL(this.remoteAudio.src);
@@ -629,8 +767,27 @@ export class ChatClient extends EventEmitter {
     return true;
   }
 
+  public getRemoteVideo(): HTMLVideoElement | null {
+    return this.remoteVideo;
+  }
+
   private async setupMediaPlayback(): Promise<void> {
     if (this.remoteVideo) return;
+    if (this.isMediaSettingUp) {
+      console.log(
+        "[ChatClient] setupMediaPlayback already in progress, waiting...",
+      );
+      return new Promise((resolve) => {
+        const check = setInterval(() => {
+          if (!this.isMediaSettingUp) {
+            clearInterval(check);
+            resolve();
+          }
+        }, 100);
+      });
+    }
+
+    this.isMediaSettingUp = true;
 
     return new Promise((resolve) => {
       this.remoteVideo = document.createElement("video");
@@ -679,9 +836,11 @@ export class ChatClient extends EventEmitter {
           });
 
           this.emit("remote_stream_ready", this.remoteVideo);
+          this.isMediaSettingUp = false;
           resolve();
         } catch (e) {
           console.error("Error adding SourceBuffer:", e);
+          this.isMediaSettingUp = false;
           resolve();
         }
       });
@@ -690,6 +849,20 @@ export class ChatClient extends EventEmitter {
 
   private async resetMediaPlayback() {
     console.log("[ChatClient] Resetting MediaSource for new MIME type");
+
+    if (this.isMediaSettingUp) {
+      console.log(
+        "[ChatClient] resetMediaPlayback waiting for setup to finish...",
+      );
+      await new Promise((resolve) => {
+        const check = setInterval(() => {
+          if (!this.isMediaSettingUp) {
+            clearInterval(check);
+            resolve(true);
+          }
+        }, 100);
+      });
+    }
 
     // Clear queue
     this.audioQueue = [];
@@ -816,7 +989,13 @@ export class ChatClient extends EventEmitter {
         case "MIME_CHANGE":
           console.log(`[ChatClient] Received MIME_CHANGE: ${data.mimeType}`);
           this.remoteMimeType = data.mimeType;
+
           await this.resetMediaPlayback();
+
+          const newMode = data.mimeType.startsWith("video/")
+            ? "Video"
+            : "Audio";
+          this.emit("call_mode_changed", { sid, mode: newMode });
           break;
         case "MIC_STATUS":
           this.emit("peer_mic_status", { sid, muted: data.muted });
@@ -829,7 +1008,7 @@ export class ChatClient extends EventEmitter {
                 data.id,
                 sid,
                 data.text,
-                data.timestamp,
+                Date.now(),
                 data.replyTo ? JSON.stringify(data.replyTo) : null,
               ],
             );
@@ -932,7 +1111,15 @@ export class ChatClient extends EventEmitter {
           console.log("[ChatClient] Received CALL_ACCEPT");
           if (data?.mimeType) this.remoteMimeType = data.mimeType;
 
-          await this.startStreaming(sid, this.pendingCallMode || "Audio");
+          const myMime = await this.initializeCallStream(sid);
+
+          if (this.pendingCallMode === "Video") {
+            await this.toggleVideo(true);
+          } else if (this.pendingCallMode === "Screen") {
+            await this.toggleScreenShare(true);
+          } else {
+            this.send({ t: "MIME_CHANGE", sid, data: { mimeType: myMime } });
+          }
 
           this.setupMediaPlayback();
           this.isCallConnected = true;
@@ -1319,7 +1506,9 @@ export class ChatClient extends EventEmitter {
         });
         break;
       case "STREAM":
-        await this.handleStream(frame);
+        this.messageQueue.enqueue(async () => {
+          await this.handleStream(frame);
+        });
         break;
       case "PEER_ONLINE":
         if (this.sessions[sid]) {
