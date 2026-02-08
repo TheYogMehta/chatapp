@@ -44,6 +44,11 @@ export const ChatHeader = styled.div`
   border-bottom: 1px solid ${colors.border.subtle};
   z-index: 50;
   flex-shrink: 0;
+
+  @media (max-width: 768px) {
+    padding: ${spacing[2]} ${spacing[3]};
+    padding-top: max(${spacing[2]}, env(safe-area-inset-top));
+  }
 `;
 
 export const BackButton = styled.button`
@@ -94,9 +99,9 @@ export const HeaderStatus = styled.div<{ isOnline?: boolean }>`
     height: 8px;
     border-radius: ${radii.full};
     background-color: ${(props) =>
-      props.isOnline ? colors.status.success : colors.text.tertiary};
+    props.isOnline ? colors.status.success : colors.text.tertiary};
     box-shadow: ${(props) =>
-      props.isOnline ? `0 0 8px ${colors.status.success}` : "none"};
+    props.isOnline ? `0 0 8px ${colors.status.success}` : "none"};
   }
 `;
 
@@ -111,8 +116,12 @@ export const MessageList = styled.div`
   padding: ${spacing[4]};
   display: flex;
   flex-direction: column;
-  gap: ${spacing[2]};
+  gap: ${spacing[1]}; // Tighter gap for message groups
   overscroll-behavior-y: contain;
+
+  @media (max-width: 768px) {
+    padding: ${spacing[2]};
+  }
 `;
 
 const shake = keyframes`
@@ -132,6 +141,13 @@ export const InputContainer = styled.div`
   align-items: flex-end;
   gap: ${spacing[3]};
   position: relative;
+  border-top: 1px solid ${colors.border.subtle};
+
+  @media (max-width: 768px) {
+     padding: ${spacing[2]};
+     padding-bottom: max(${spacing[2]}, env(safe-area-inset-bottom));
+     gap: ${spacing[2]};
+  }
 `;
 
 export const InputWrapper = styled.div<{ isRateLimited?: boolean }>`
@@ -154,10 +170,10 @@ export const InputWrapper = styled.div<{ isRateLimited?: boolean }>`
 
   &:focus-within {
     border-color: ${(props) =>
-      props.isRateLimited ? colors.status.error : colors.primary.DEFAULT};
+    props.isRateLimited ? colors.status.error : colors.primary.DEFAULT};
     box-shadow: 0 0 0 2px
       ${(props) =>
-        props.isRateLimited ? "rgba(239, 68, 68, 0.2)" : colors.primary.subtle};
+    props.isRateLimited ? "rgba(239, 68, 68, 0.2)" : colors.primary.subtle};
   }
 `;
 
@@ -201,7 +217,7 @@ export const SendButton = styled.button<{ isRecording?: boolean }>`
   &:hover {
     transform: scale(1.05);
     background-color: ${(props) =>
-      props.isRecording ? colors.status.error : colors.primary.hover};
+    props.isRecording ? colors.status.error : colors.primary.hover};
   }
 
   &:active {
@@ -323,20 +339,28 @@ export const BubbleWrapper = styled.div<{ isMe: boolean }>`
 
 export const Bubble = styled.div<{ isMe: boolean }>`
   background-color: ${(props) =>
-    props.isMe ? colors.primary.DEFAULT : colors.background.tertiary};
-  color: ${(props) => (props.isMe ? "white" : colors.text.primary)};
-  padding: ${spacing[3]} ${spacing[4]};
+    props.isMe ? "#005c4b" : colors.background.tertiary}; // WhatsApp-like dark green for me
+  color: ${(props) => (props.isMe ? "#e9edef" : colors.text.primary)};
+  padding: ${spacing[2]} ${spacing[3]};
   border-radius: ${(props) =>
     props.isMe
-      ? `${radii.xl} ${radii.xl} ${radii.sm} ${radii.xl}`
-      : `${radii.xl} ${radii.xl} ${radii.xl} ${radii.sm}`};
-  max-width: 100%;
+      ? `${radii.lg} 0 ${radii.lg} ${radii.lg}`
+      : `0 ${radii.lg} ${radii.lg} ${radii.lg}`};
+  max-width: 85%;
   position: relative;
-  box-shadow: ${shadows.sm};
+  box-shadow: 0 1px 0.5px rgba(0,0,0,0.13);
   word-break: break-word;
+  font-size: ${typography.fontSize.base};
+  line-height: 1.4;
+
+  @media (max-width: 768px) {
+    font-size: ${typography.fontSize.sm};
+    padding: 6px 9px;
+    max-width: 80%;
+  }
 
   a {
-    color: ${(props) => (props.isMe ? "white" : colors.primary.DEFAULT)};
+    color: ${(props) => (props.isMe ? "#53bdeb" : colors.primary.DEFAULT)};
     text-decoration: underline;
   }
 `;
@@ -508,7 +532,7 @@ export const PlayPauseBtn = styled.div<{ isMe: boolean }>`
   &:hover {
     transform: scale(1.05);
     background-color: ${(props) =>
-      props.isMe ? "rgba(255, 255, 255, 0.3)" : "rgba(0, 0, 0, 0.2)"};
+    props.isMe ? "rgba(255, 255, 255, 0.3)" : "rgba(0, 0, 0, 0.2)"};
   }
 `;
 
@@ -536,8 +560,8 @@ export const WaveformBar = styled.div<{
         ? "#a5b4fc"
         : "#64748b"
       : props.isMe
-      ? "rgba(255, 255, 255, 0.4)"
-      : "rgba(0, 0, 0, 0.1)"};
+        ? "rgba(255, 255, 255, 0.4)"
+        : "rgba(0, 0, 0, 0.1)"};
 `;
 
 export const SpeedButton = styled.div`

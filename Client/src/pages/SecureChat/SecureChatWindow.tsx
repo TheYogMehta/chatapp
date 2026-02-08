@@ -39,6 +39,7 @@ import { colors } from "../../theme/design-system";
 import { AppLockScreen } from "../Home/components/overlays/AppLockScreen";
 import { useSecureChat } from "./hooks/useSecureChat";
 import { VaultItem } from "../../utils/secureStorage";
+import { MediaModal } from "../Home/components/chat/MediaModal";
 
 export const SecureChatWindow: React.FC = () => {
   const history = useHistory();
@@ -60,6 +61,12 @@ export const SecureChatWindow: React.FC = () => {
 
   // Viewing State
   const [viewingItem, setViewingItem] = useState<any>(null);
+  const [mediaModalOpen, setMediaModalOpen] = useState(false);
+  const [selectedMedia, setSelectedMedia] = useState<{
+    url: string;
+    type: "image" | "video";
+    description?: string;
+  } | null>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -130,6 +137,11 @@ export const SecureChatWindow: React.FC = () => {
       URL.revokeObjectURL(viewingItem.contentUrl);
     }
     setViewingItem(null);
+  };
+
+  const handleMediaClick = (url: string, type: "image" | "video", description?: string) => {
+    setSelectedMedia({ url, type, description });
+    setMediaModalOpen(true);
   };
 
   if (!isUnlocked) {
@@ -259,7 +271,8 @@ export const SecureChatWindow: React.FC = () => {
             <MessageBubble
               key={msg.id}
               msg={msg} // Fixed prop name from message to msg
-              onReply={() => {}}
+              onReply={() => { }}
+              onMediaClick={handleMediaClick}
             />
           ))}
           <div ref={messagesEndRef} />
@@ -466,6 +479,12 @@ export const SecureChatWindow: React.FC = () => {
           </div>
         </div>
       )}
+      {/* Media Viewer Modal */}
+      <MediaModal
+        isOpen={mediaModalOpen}
+        onClose={() => setMediaModalOpen(false)}
+        media={selectedMedia}
+      />
     </SecureContainer>
   );
 };
