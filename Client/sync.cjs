@@ -10,7 +10,7 @@ try {
 
   const filePath = path.join(
     process.cwd(),
-    "electron/src/rt/electron-plugins.js"
+    "electron/src/rt/electron-plugins.js",
   );
 
   // only replace the plugin entry, nothing else
@@ -27,7 +27,7 @@ const pluginRelativePath = path.posix.join(
   "sqlite",
   "electron",
   "dist",
-  "plugin.js"
+  "plugin.js",
 );
 
 const CapacitorCommunitySqlite = require(pluginRelativePath);
@@ -36,7 +36,7 @@ module.exports = {
   CapacitorCommunitySqlite: CapacitorCommunitySqlite.default,
 };
 `,
-    "utf8"
+    "utf8",
   );
   console.log("Updated CapacitorCommunitySqlite export.");
 } catch (err) {

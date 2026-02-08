@@ -379,7 +379,6 @@ export class ChatClient extends EventEmitter {
       let bitsPerSecond = 48000;
 
       if (mode === "Screen") {
-        // Check if screen sharing is supported
         const isElectron =
           (window as any).electron &&
           (window as any).electron.getDesktopSources;
@@ -401,9 +400,8 @@ export class ChatClient extends EventEmitter {
               `[ChatClient] Selecting source: ${source.name} (${source.id})`,
             );
 
-            // Electron specific constraints
             stream = await navigator.mediaDevices.getUserMedia({
-              audio: false, 
+              audio: false,
               video: {
                 mandatory: {
                   chromeMediaSource: "desktop",
@@ -505,6 +503,16 @@ export class ChatClient extends EventEmitter {
       this.mediaRecorder.onstop = () => {
         console.log("MediaRecorder stopped");
       };
+
+      this.mediaRecorder.onerror = (e: any) => {
+        console.error("MediaRecorder error:", e);
+      };
+
+      stream.getTracks().forEach((track) => {
+        track.onended = () => {
+          console.log(`[ChatClient] Local stream track ended: ${track.kind}`);
+        };
+      });
 
       this.mediaRecorder.start(100);
       return mimeType;
@@ -733,6 +741,9 @@ export class ChatClient extends EventEmitter {
         return;
       }
       if (!this.remoteVideo) {
+        console.log(
+          "[ChatClient] handleStream: remoteVideo not ready, setting up",
+        );
         await this.setupMediaPlayback();
       }
 
@@ -771,9 +782,19 @@ export class ChatClient extends EventEmitter {
       }
       const json = JSON.parse(new TextDecoder().decode(decryptedBuffer));
       const { t, data } = json;
-      console.log("[ChatClient] Decrypted MSG:", json);
+
+      if (t !== "MSG") {
+        console.log(`[ChatClient] Decrypted Signal: ${t}`, data);
+      } else {
+        console.log("[ChatClient] Decrypted MSG:", json);
+      }
 
       switch (t) {
+        case "MIME_CHANGE":
+          console.log(`[ChatClient] Received MIME_CHANGE: ${data.mimeType}`);
+          this.remoteMimeType = data.mimeType;
+          await this.resetMediaPlayback();
+          break;
         case "MSG":
           try {
             await executeDB(
