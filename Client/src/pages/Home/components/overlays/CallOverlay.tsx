@@ -15,6 +15,7 @@ import {
 
 import { IconButton } from "../../../../components/ui/IconButton";
 import { ChatClient } from "../../../../services/ChatClient";
+import { StorageService } from "../../../../utils/Storage";
 import {
   OverlayContainer,
   CallCard,
@@ -58,6 +59,34 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
   const [position, setPosition] = useState({ x: 20, y: 20 });
   const isDragging = useRef(false);
   const dragStart = useRef({ x: 0, y: 0 });
+
+  const [resolvedPeerAvatar, setResolvedPeerAvatar] = useState<string | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (!callState?.peerAvatar) {
+      setResolvedPeerAvatar(null);
+      return;
+    }
+    const avatar = callState.peerAvatar;
+    if (avatar.startsWith("data:") || avatar.startsWith("http")) {
+      setResolvedPeerAvatar(avatar);
+    } else {
+      StorageService.getProfileImage(avatar.replace(/\.jpg$/, ""))
+        .then((src) => {
+          if (src) {
+            setResolvedPeerAvatar(src);
+          } else {
+            return StorageService.getFileSrc(avatar, "image/jpeg");
+          }
+        })
+        .then((src) => {
+          if (src && typeof src === "string") setResolvedPeerAvatar(src);
+        })
+        .catch((e) => console.warn("Failed to resolve call avatar", e));
+    }
+  }, [callState?.peerAvatar]);
 
   const client = ChatClient.getInstance();
   useEffect(() => {
@@ -172,7 +201,19 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
       <OverlayContainer>
         <CallCard>
           <AvatarContainer isCalling>
-            {callState.remoteSid?.[0]?.toUpperCase() || <User size={48} />}
+            {resolvedPeerAvatar ? (
+              <img
+                src={resolvedPeerAvatar}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  borderRadius: "50%",
+                }}
+              />
+            ) : (
+              callState.remoteSid?.[0]?.toUpperCase() || <User size={48} />
+            )}
           </AvatarContainer>
           <CallerInfo>
             <CallerName>
@@ -316,9 +357,9 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
               }}
             >
               <AvatarContainer style={{ width: 150, height: 150 }}>
-                {callState.peerAvatar ? (
+                {resolvedPeerAvatar ? (
                   <img
-                    src={callState.peerAvatar}
+                    src={resolvedPeerAvatar}
                     style={{
                       width: "100%",
                       height: "100%",

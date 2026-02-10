@@ -198,12 +198,34 @@ export const useChatLogic = () => {
       setUserEmail(null);
       setIsLoading(false);
     });
-    client.on("call_incoming", (call) =>
-      setActiveCall({ ...call, status: "ringing" }),
-    );
-    client.on("call_outgoing", (call) =>
-      setActiveCall({ ...call, status: "outgoing" }),
-    );
+    const getSessionInfo = async (sid: string) => {
+      try {
+        const rows = await queryDB(
+          "SELECT alias_name, alias_avatar, peer_name, peer_avatar, peer_email FROM sessions WHERE sid = ?",
+          [sid],
+        );
+        if (rows.length > 0) {
+          const r = rows[0];
+          return {
+            peerName: r.alias_name || r.peer_name || r.peer_email || "Unknown",
+            peerAvatar: r.alias_avatar || r.peer_avatar,
+          };
+        }
+      } catch (e) {
+        console.error("Failed to load session info for call", e);
+      }
+      return { peerName: "Unknown", peerAvatar: null };
+    };
+
+    client.on("call_incoming", async (call) => {
+      const info = await getSessionInfo(call.sid);
+      setActiveCall({ ...call, ...info, status: "ringing" });
+    });
+
+    client.on("call_outgoing", async (call) => {
+      const info = await getSessionInfo(call.sid);
+      setActiveCall({ ...call, ...info, status: "outgoing" });
+    });
 
     loadSessions();
     client.on("call_started", () =>

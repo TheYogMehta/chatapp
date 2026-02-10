@@ -1,6 +1,13 @@
 import styled from "@emotion/styled";
 import { css, keyframes } from "@emotion/react";
-import { colors, glassEffect, radii, shadows, spacing, typography } from "../../../../theme/design-system";
+import {
+  colors,
+  glassEffect,
+  radii,
+  shadows,
+  spacing,
+  typography,
+} from "../../../../theme/design-system";
 
 const pulse = keyframes`
   0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
@@ -11,7 +18,7 @@ const pulse = keyframes`
 export const OverlayContainer = styled.div`
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: 3000;
   background-color: ${colors.background.overlay};
   backdrop-filter: blur(8px);
   display: flex;
@@ -20,8 +27,12 @@ export const OverlayContainer = styled.div`
   animation: fadeIn 0.3s ease-out;
 
   @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
 `;
 
@@ -43,7 +54,11 @@ export const AvatarContainer = styled.div<{ isCalling?: boolean }>`
   width: 120px;
   height: 120px;
   border-radius: ${radii.full};
-  background: linear-gradient(135deg, ${colors.primary.DEFAULT}, ${colors.primary.active});
+  background: linear-gradient(
+    135deg,
+    ${colors.primary.DEFAULT},
+    ${colors.primary.active}
+  );
   display: flex;
   align-items: center;
   justify-content: center;
@@ -52,7 +67,11 @@ export const AvatarContainer = styled.div<{ isCalling?: boolean }>`
   color: white;
   border: 4px solid ${colors.background.secondary};
   margin-bottom: ${spacing[4]};
-  ${props => props.isCalling && css`animation: ${pulse} 2s infinite;`}
+  ${(props) =>
+    props.isCalling &&
+    css`
+      animation: ${pulse} 2s infinite;
+    `}
 `;
 
 export const CallerInfo = styled.div`
@@ -82,23 +101,24 @@ export const ControlsRow = styled.div`
   margin-top: ${spacing[4]};
 `;
 
-// Minimized View Styles
-export const MinimizedContainer = styled.div<{ position: { x: number; y: number } }>`
+export const MinimizedContainer = styled.div<{
+  position: { x: number; y: number };
+}>`
   position: fixed;
-  left: ${props => props.position.x}px;
-  top: ${props => props.position.y}px;
+  left: ${(props) => props.position.x}px;
+  top: ${(props) => props.position.y}px;
   width: 240px;
   height: 180px;
   background-color: ${colors.background.secondary};
   border-radius: ${radii.lg};
   box-shadow: ${shadows.lg};
   border: 1px solid ${colors.border.subtle};
-  z-index: 1000;
+  z-index: 3001;
   overflow: hidden;
   cursor: grab;
   display: flex;
   flex-direction: column;
-  
+
   &:active {
     cursor: grabbing;
     box-shadow: ${shadows.xl};
@@ -123,7 +143,7 @@ export const MaximizeButton = styled.button`
   padding: ${spacing[1]};
   cursor: pointer;
   z-index: 10;
-  
+
   &:hover {
     background: rgba(0, 0, 0, 0.7);
   }
@@ -159,7 +179,7 @@ export const MainVideoArea = styled.div`
 export const RemoteVideo = styled.div`
   width: 100%;
   height: 100%;
-  
+
   video {
     width: 100%;
     height: 100%;
@@ -176,7 +196,7 @@ export const MinimizeButton = styled.div`
   opacity: 0.7;
   z-index: 10;
   transition: opacity 0.2s;
-  
+
   &:hover {
     opacity: 1;
   }

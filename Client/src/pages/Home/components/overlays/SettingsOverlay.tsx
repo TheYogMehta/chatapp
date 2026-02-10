@@ -215,9 +215,9 @@ export const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
       let avatarToSave = editAvatar;
       if (editAvatar && editAvatar.startsWith("data:")) {
         const base64Data = editAvatar.split(",")[1];
-        avatarToSave = await StorageService.saveRawFile(
+        avatarToSave = await StorageService.saveProfileImage(
           base64Data,
-          `avatar_${Date.now()}.txt`,
+          `avatar_${Date.now()}`,
         );
       }
 
@@ -409,10 +409,13 @@ export const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                   <ProfileHeader>
                     <ProfileInfo>
                       <UserAvatar
-                        avatarUrl={
-                          accounts.find((a) => a.email === currentUserEmail)
-                            ?.avatarUrl
-                        }
+                        avatarUrl={(() => {
+                          const url = accounts.find(
+                            (a) => a.email === currentUserEmail,
+                          )?.avatarUrl;
+                          console.log("[Settings] Profile Avatar URL:", url);
+                          return url;
+                        })()}
                         name={currentUserEmail || "?"}
                         size={60}
                       />
