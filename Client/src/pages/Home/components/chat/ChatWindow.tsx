@@ -299,6 +299,24 @@ export const ChatWindow = ({
     setInput((prev) => prev + emojiData.emoji);
   };
 
+  const handlePaste = (e: React.ClipboardEvent) => {
+    if (e.clipboardData && e.clipboardData.items) {
+      const items = e.clipboardData.items;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].kind === "file") {
+          const file = items[i].getAsFile();
+          if (file) {
+            e.preventDefault();
+            if (onFileSelect) {
+              onFileSelect(file);
+            }
+            return;
+          }
+        }
+      }
+    }
+  };
+
   return (
     <ChatContainer>
       <ChatHeader>
@@ -432,6 +450,7 @@ export const ChatWindow = ({
             rows={1}
             value={isRecording ? "Recording..." : input}
             readOnly={isRecording}
+            onPaste={handlePaste}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && input.trim()) {

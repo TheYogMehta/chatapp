@@ -85,7 +85,6 @@ export const LinkPreview: React.FC<LinkPreviewProps> = ({
         const hostname = urlObj.hostname.toLowerCase();
         const pathname = urlObj.pathname;
 
-        // 1. Direct Image Check
         if (/\.(gif|jpe?g|png|webp|bmp|tiff)$/i.test(pathname)) {
           if (mounted) {
             setImageSrc(url);
@@ -101,10 +100,7 @@ export const LinkPreview: React.FC<LinkPreviewProps> = ({
           return;
         }
 
-        // 2. Special Providers (Giphy, Tenor, Imgur)
         if (hostname.includes("giphy.com")) {
-          // https://giphy.com/gifs/funny-cat-CjmvTCZf2U3p09Cn0h
-          // https://giphy.com/gifs/id
           const match = pathname.match(/\/gifs\/(?:.*-)?([a-zA-Z0-9]+)$/);
           if (match && match[1]) {
             const gifUrl = `https://media.giphy.com/media/${match[1]}/giphy.gif`;
@@ -124,7 +120,6 @@ export const LinkPreview: React.FC<LinkPreviewProps> = ({
         }
 
         if (hostname.includes("tenor.com")) {
-          // Try oEmbed for Tenor (usually allows CORS)
           try {
             const oembedUrl = `https://tenor.com/oembed?url=${encodeURIComponent(
               url,
@@ -132,7 +127,6 @@ export const LinkPreview: React.FC<LinkPreviewProps> = ({
             const res = await fetch(oembedUrl, { mode: "cors" });
             const data = await res.json();
             if (data && mounted) {
-              // Tenor oEmbed returns a thumbnail_url or url that is an image
               const img = data.url || data.thumbnail_url;
               if (img) {
                 setImageSrc(img);
@@ -153,10 +147,8 @@ export const LinkPreview: React.FC<LinkPreviewProps> = ({
         }
 
         if (hostname.includes("imgur.com")) {
-          // https://imgur.com/gallery/ID or https://imgur.com/ID
           const match = pathname.match(/\/(?:gallery\/)?([a-zA-Z0-9]+)$/);
           if (match && match[1]) {
-            // Assume .png for safety, imgur handles redirects mostly
             const imgUrl = `https://i.imgur.com/${match[1]}.png`;
             if (mounted) {
               setImageSrc(imgUrl);
@@ -172,10 +164,7 @@ export const LinkPreview: React.FC<LinkPreviewProps> = ({
             return;
           }
         }
-
-        // 3. Generic Fetch (Metadata / OG Tags)
         try {
-          // Attempt client-side fetch (will only work for CORS-enabled sites)
           const res = await fetch(url, { mode: "cors" });
           const contentType = res.headers.get("content-type") || "";
 
@@ -219,7 +208,6 @@ export const LinkPreview: React.FC<LinkPreviewProps> = ({
             e,
           );
           if (mounted) {
-            // Fallback for CORS restricted sites
             setMetadata({
               title: new URL(url).hostname,
               description: "Preview unavailable (CORS restricted)",
