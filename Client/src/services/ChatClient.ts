@@ -41,34 +41,51 @@ export class ChatClient extends EventEmitter {
   public userEmail: string | null = null;
   private authToken: string | null = null;
   private identityKeyPair: CryptoKeyPair | null = null;
-  private mediaRecorder: MediaRecorder | null = null;
-  private audioContext: AudioContext | null = null;
+  private peerConnection: RTCPeerConnection | null = null;
+  private remoteStream: MediaStream | null = null;
+  private remoteAudioEl: HTMLAudioElement | null = null;
   private isCalling: boolean = false;
   private isCallConnected: boolean = false;
-  private remoteAudio: HTMLAudioElement | null = null;
-  private remoteVideo: HTMLVideoElement | null = null;
-  private mediaSource: MediaSource | null = null;
-  private sourceBuffer: SourceBuffer | null = null;
-  private audioQueue: ArrayBuffer[] = [];
-  private messageQueue = new MessageQueue();
-  private isSourceOpen = false;
   private callStartTime: number = 0;
-  private remoteMimeType: string | null = null;
   public currentLocalStream: MediaStream | null = null;
   private currentCallSid: string | null = null;
-  private isMediaSettingUp: boolean = false;
-  private isResettingMedia: boolean = false;
   private micStream: MediaStream | null = null;
   private cameraStream: MediaStream | null = null;
   private screenStream: MediaStream | null = null;
-  private combinedStream: MediaStream | null = null;
-  private audioDestination: MediaStreamAudioDestinationNode | null = null;
+  private remoteMimeType: string | null = null;
+  private turnCreds: any = null;
+  private turnPromise: Promise<any> | null = null;
+  private onTurnCreds: ((creds: any) => void) | null = null;
   public isMicEnabled: boolean = true;
   public isVideoEnabled: boolean = false;
   public isScreenEnabled: boolean = false;
-
   private ringtoneInterval: any = null;
+  private audioContext: AudioContext | null = null;
   private pendingCallMode: "Audio" | "Video" | "Screen" | null = null;
+  private messageQueue: MessageQueue;
+
+  private _pendingOffer: {
+    sid: string;
+    offer: RTCSessionDescriptionInit;
+  } | null = null;
+
+  private iceCandidateQueue: Array<{
+    sid: string;
+    candidate: RTCIceCandidateInit;
+  }> = [];
+
+  constructor() {
+    super();
+    this.messageQueue = new MessageQueue(async (item) => {
+      if (item.type === "HANDLE_MSG") {
+        await this.handleMsg(
+          item.payload.sid,
+          item.payload.payload,
+          item.priority,
+        );
+      }
+    });
+  }
 
   static getInstance() {
     if (!ChatClient.instance) ChatClient.instance = new ChatClient();
@@ -85,12 +102,32 @@ export class ChatClient extends EventEmitter {
     socket.send(frame);
   }
 
+  private async sendSignal(signal: {
+    type: string;
+    sid: string;
+    [key: string]: any;
+  }) {
+    const { type, sid, ...rest } = signal;
+    const innerType = type === "RTC_ICE" ? "ICE_CANDIDATE" : type;
+
+    const payload = await this.encryptForSession(
+      sid,
+      JSON.stringify({
+        t: "MSG",
+        data: { type: innerType, ...rest },
+      }),
+      0,
+    );
+    this.send({ t: type, sid, data: { payload } });
+  }
+
   public hasToken(): boolean {
     return !!this.authToken;
   }
 
   async init() {
     this.emit("session_updated");
+    await this.messageQueue.init();
 
     socket.on("WS_CONNECTED", () => {
       this.emit("status", true);
@@ -245,6 +282,53 @@ export class ChatClient extends EventEmitter {
       }
     } catch (e) {
       console.error("[ChatClient] Failed to broadcast profile update", e);
+    }
+  }
+
+  public async sendReaction(
+    sid: string,
+    messageId: string,
+    emoji: string,
+    action: "add" | "remove",
+  ) {
+    if (!this.sessions[sid]) throw new Error("Session not found");
+
+    const payload = await this.encryptForSession(
+      sid,
+      JSON.stringify({
+        t: "MSG",
+        data: {
+          type: "REACTION",
+          messageId,
+          emoji,
+          action,
+          timestamp: Date.now(),
+        },
+      }),
+      1,
+    );
+    this.send({ t: "MSG", sid, data: { payload }, c: true, p: 1 });
+    try {
+      if (action === "add") {
+        await executeDB(
+          "INSERT OR IGNORE INTO reactions (id, message_id, sender_email, emoji, timestamp) VALUES (?, ?, 'me', ?, ?)",
+          [`${messageId}_me_${emoji}`, messageId, emoji, Date.now()],
+        );
+      } else {
+        await executeDB(
+          "DELETE FROM reactions WHERE message_id = ? AND sender_email = 'me' AND emoji = ?",
+          [messageId, emoji],
+        );
+      }
+      this.emit("reaction_update", { messageId });
+      this.emit(`reaction_update:${messageId}`, {
+        messageId,
+        emoji,
+        action,
+        sender: "me",
+      });
+    } catch (e) {
+      console.error("Failed to save reaction locally", e);
     }
   }
 
@@ -429,15 +513,44 @@ export class ChatClient extends EventEmitter {
     try {
       this.isCalling = true;
       this.currentCallSid = sid;
-      console.log("[ChatClient] startCall: Sending invite to", sid);
+      console.log("[ChatClient] startCall: Initiating WebRTC call to", sid);
 
-      const payload = await this.encryptForSession(
+      const callStartPayload = await this.encryptForSession(
         sid,
         JSON.stringify({ t: "MSG", data: { type: "CALL_START", mode } }),
         0,
       );
-      this.send({ t: "MSG", sid, data: { payload }, c: true, p: 0 });
+      this.send({
+        t: "MSG",
+        sid,
+        data: { payload: callStartPayload },
+        c: true,
+        p: 0,
+      });
 
+      await this.createPeerConnection(sid);
+      await this.initializeLocalMedia();
+
+      if (mode === "Video") {
+        await this.toggleVideo(true);
+      } else if (mode === "Screen") {
+        await this.toggleScreenShare(true);
+      }
+
+      const offer = await this.peerConnection!.createOffer();
+      await this.peerConnection!.setLocalDescription(offer);
+
+      const offerPayload = await this.encryptForSession(
+        sid,
+        JSON.stringify({
+          t: "MSG",
+          data: { type: "RTC_OFFER", offer },
+        }),
+        0,
+      );
+      this.send({ t: "RTC_OFFER", sid, data: { payload: offerPayload } });
+
+      console.log("[ChatClient] Sent WebRTC offer to", sid);
       this.emit("call_outgoing", { sid, type: mode, remoteSid: sid });
 
       setTimeout(() => {
@@ -489,7 +602,107 @@ export class ChatClient extends EventEmitter {
     }
   }
 
-  private async initializeCallStream(sid: string): Promise<string> {
+  private waitForTurnCredentials(): Promise<any> {
+    if (this.turnCreds) return Promise.resolve(this.turnCreds);
+    if (this.turnPromise) return this.turnPromise;
+
+    this.turnPromise = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.turnPromise = null;
+        this.onTurnCreds = null;
+        console.error("[ChatClient] TURN credential request timed out");
+        reject(new Error("TURN timeout"));
+      }, 5000);
+
+      this.onTurnCreds = (data: any) => {
+        clearTimeout(timeout);
+        this.turnCreds = data;
+        this.turnPromise = null;
+        this.onTurnCreds = null;
+        resolve(data);
+      };
+
+      this.send({ t: "GET_TURN_CREDS", c: true, p: 0 });
+    });
+
+    return this.turnPromise;
+  }
+
+  private async createPeerConnection(sid: string): Promise<void> {
+    if (this.peerConnection) {
+      console.warn(
+        "[ChatClient] PeerConnection already exists — skipping create",
+      );
+      return;
+    }
+
+    console.log("[ChatClient] Creating RTCPeerConnection");
+
+    const creds = await this.waitForTurnCredentials();
+
+    this.peerConnection = new RTCPeerConnection({
+      iceServers: creds.iceServers,
+      iceTransportPolicy: "all",
+    });
+
+    this.peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        this.sendSignal({
+          type: "RTC_ICE",
+          sid,
+          candidate: event.candidate,
+        });
+      }
+    };
+
+    this.peerConnection.oniceconnectionstatechange = () => {
+      console.log("ICE:", this.peerConnection?.iceConnectionState);
+    };
+
+    this.peerConnection.ontrack = (event) => {
+      console.log("[ChatClient] Received remote track", event.track.kind);
+
+      if (!this.remoteStream) {
+        this.remoteStream = new MediaStream();
+        this.attachRemoteAudio(this.remoteStream);
+      }
+
+      this.remoteStream.addTrack(event.track);
+      this.emit("remote_stream_ready", this.remoteStream);
+    };
+
+    this.peerConnection.onconnectionstatechange = () => {
+      console.log(
+        "[ChatClient] PC connection state:",
+        this.peerConnection?.connectionState,
+      );
+    };
+  }
+
+  private attachRemoteAudio(stream: MediaStream) {
+    if (!this.remoteAudioEl) {
+      const audio = document.createElement("audio");
+      audio.autoplay = true;
+      (audio as any).playsInline = true;
+      audio.controls = false;
+      audio.muted = false;
+      audio.volume = 1.0;
+
+      document.body.appendChild(audio);
+      this.remoteAudioEl = audio;
+    }
+
+    this.remoteAudioEl.srcObject = stream;
+
+    const playPromise = this.remoteAudioEl.play();
+    if (playPromise) {
+      playPromise.catch((err) => {
+        console.warn("[ChatClient] Audio play() blocked:", err);
+      });
+    }
+  }
+
+  private async initializeLocalMedia(): Promise<void> {
     try {
       this.micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -499,22 +712,17 @@ export class ChatClient extends EventEmitter {
         },
       });
 
-      this.audioContext = new AudioContext();
-      this.audioDestination = this.audioContext.createMediaStreamDestination();
+      if (this.peerConnection) {
+        this.micStream.getTracks().forEach((track) => {
+          this.peerConnection!.addTrack(track, this.micStream!);
+        });
+      }
 
-      const micSource = this.audioContext.createMediaStreamSource(
-        this.micStream,
-      );
-      micSource.connect(this.audioDestination);
-
-      this.combinedStream = new MediaStream();
-      this.audioDestination.stream.getAudioTracks().forEach((track) => {
-        this.combinedStream!.addTrack(track);
-      });
-
-      return await this.startMediaRecorder(sid);
+      this.currentLocalStream = this.micStream;
+      this.emit("local_stream_ready", this.currentLocalStream);
+      console.log("[ChatClient] Local media initialized");
     } catch (e) {
-      console.error("Error initializing call stream", e);
+      console.error("Error initializing local media", e);
       this.emit("notification", {
         type: "error",
         message: "Microphone error: " + e,
@@ -523,16 +731,55 @@ export class ChatClient extends EventEmitter {
     }
   }
 
+  public resumeAudioPlayback() {
+    if (this.remoteAudioEl) {
+      this.remoteAudioEl.muted = false;
+      this.remoteAudioEl.volume = 1.0;
+      this.remoteAudioEl.play().catch(() => {});
+    }
+
+    if (this.audioContext?.state === "suspended") {
+      this.audioContext.resume().catch(() => {});
+    }
+  }
+
+  private async negotiate(sid: string) {
+    if (!this.peerConnection || !this.isCallConnected) return;
+    try {
+      console.log("[ChatClient] Renegotiating connection...");
+      const offer = await this.peerConnection.createOffer();
+      await this.peerConnection.setLocalDescription(offer);
+
+      const offerPayload = await this.encryptForSession(
+        sid,
+        JSON.stringify({
+          t: "MSG",
+          data: { type: "RTC_OFFER", offer },
+        }),
+        0,
+      );
+      this.send({ t: "RTC_OFFER", sid, data: { payload: offerPayload } });
+    } catch (e) {
+      console.error("[ChatClient] Renegotiation failed:", e);
+    }
+  }
+
   public async toggleVideo(enable?: boolean): Promise<void> {
     const shouldEnable = enable !== undefined ? enable : !this.isVideoEnabled;
     const sid = this.currentCallSid;
-    if (!sid || !this.isCalling) return;
+    if (!sid || !this.isCalling || !this.peerConnection) return;
 
     try {
       if (shouldEnable) {
         if (this.isScreenEnabled) {
-          await this.toggleScreenShare(false);
+          if (this.screenStream) {
+            this.screenStream.getTracks().forEach((t) => t.stop());
+            this.screenStream = null;
+          }
+          this.isScreenEnabled = false;
+          this.emit("screen_toggled", { enabled: false });
         }
+
         this.cameraStream = await navigator.mediaDevices.getUserMedia({
           video: {
             width: { ideal: 640 },
@@ -542,34 +789,65 @@ export class ChatClient extends EventEmitter {
           audio: false,
         });
 
-        if (this.combinedStream) {
-          const videoTrack = this.cameraStream.getVideoTracks()[0];
-          if (videoTrack) {
-            this.combinedStream.addTrack(videoTrack);
+        const videoTrack = this.cameraStream.getVideoTracks()[0];
+        if (videoTrack) {
+          const transceivers = this.peerConnection.getTransceivers();
+          const videoTransceiver = transceivers.find(
+            (t) => t.receiver.track.kind === "video",
+          );
+
+          if (videoTransceiver && videoTransceiver.sender) {
+            await videoTransceiver.sender.replaceTrack(videoTrack);
+            videoTransceiver.direction = "sendrecv";
+          } else {
+            this.peerConnection.addTrack(videoTrack, this.cameraStream);
           }
         }
+        this.currentLocalStream = new MediaStream([
+          ...this.micStream!.getTracks(),
+          videoTrack,
+        ]);
 
         this.isVideoEnabled = true;
-        console.log("[ChatClient] Video enabled (track added)");
+        console.log("[ChatClient] Video enabled");
       } else {
-        if (this.combinedStream) {
-          this.combinedStream.getVideoTracks().forEach((track) => {
-            this.combinedStream!.removeTrack(track);
-            track.stop();
-          });
-        }
+        const transceivers = this.peerConnection.getTransceivers();
+        const videoTransceiver = transceivers.find(
+          (t) => t.receiver.track.kind === "video",
+        );
 
+        if (videoTransceiver && videoTransceiver.sender) {
+          await videoTransceiver.sender.replaceTrack(null);
+          videoTransceiver.direction = "recvonly";
+        }
         if (this.cameraStream) {
           this.cameraStream.getTracks().forEach((t) => t.stop());
           this.cameraStream = null;
         }
+
+        this.currentLocalStream = this.micStream;
         this.isVideoEnabled = false;
-        console.log("[ChatClient] Video disabled (track removed)");
+        console.log("[ChatClient] Video disabled");
       }
 
-      await this.rebuildCombinedStream(sid);
-      this.emit("local_stream_ready", this.combinedStream);
+      this.emit("local_stream_ready", this.currentLocalStream);
       this.emit("video_toggled", { enabled: this.isVideoEnabled });
+
+      await this.negotiate(sid);
+      const mode = this.isVideoEnabled ? "Video" : "Audio";
+      console.log(`[ChatClient] Sending CALL_MODE: ${mode}`);
+      const modePayload = await this.encryptForSession(
+        sid,
+        JSON.stringify({ t: "MSG", data: { type: "CALL_MODE", mode } }),
+        0,
+      );
+      this.send({
+        t: "MSG",
+        sid,
+        data: { payload: modePayload },
+        c: true,
+        p: 0,
+      });
     } catch (e: any) {
       console.error("Error toggling video:", e);
       this.emit("notification", {
@@ -582,12 +860,17 @@ export class ChatClient extends EventEmitter {
   public async toggleScreenShare(enable?: boolean): Promise<void> {
     const shouldEnable = enable !== undefined ? enable : !this.isScreenEnabled;
     const sid = this.currentCallSid;
-    if (!sid || !this.isCalling) return;
+    if (!sid || !this.isCalling || !this.peerConnection) return;
 
     try {
       if (shouldEnable) {
         if (this.isVideoEnabled) {
-          await this.toggleVideo(false);
+          if (this.cameraStream) {
+            this.cameraStream.getTracks().forEach((t) => t.stop());
+            this.cameraStream = null;
+          }
+          this.isVideoEnabled = false;
+          this.emit("video_toggled", { enabled: false });
         }
 
         const isElectron =
@@ -617,41 +900,75 @@ export class ChatClient extends EventEmitter {
             video: true,
             audio: true,
           });
-
-          if (this.audioContext && this.audioDestination) {
-            const screenAudioTracks = this.screenStream.getAudioTracks();
-            if (screenAudioTracks.length > 0) {
-              const screenAudioStream = new MediaStream(screenAudioTracks);
-              const screenSource =
-                this.audioContext.createMediaStreamSource(screenAudioStream);
-              screenSource.connect(this.audioDestination);
-            }
-          }
         } else {
           throw new Error("Screen sharing not supported on this device.");
         }
 
-        this.screenStream.getVideoTracks().forEach((track) => {
-          track.onended = () => {
+        const screenTrack = this.screenStream.getVideoTracks()[0];
+        if (screenTrack) {
+          const transceivers = this.peerConnection.getTransceivers();
+          const videoTransceiver = transceivers.find(
+            (t) => t.receiver.track.kind === "video",
+          );
+
+          if (videoTransceiver && videoTransceiver.sender) {
+            await videoTransceiver.sender.replaceTrack(screenTrack);
+            videoTransceiver.direction = "sendrecv";
+          } else {
+            this.peerConnection.addTrack(screenTrack, this.screenStream);
+          }
+
+          screenTrack.onended = () => {
             console.log("[ChatClient] Screen share ended by user");
             this.toggleScreenShare(false);
           };
-        });
+        }
+        this.currentLocalStream = new MediaStream([
+          ...this.micStream!.getTracks(),
+          screenTrack,
+        ]);
 
         this.isScreenEnabled = true;
         console.log("[ChatClient] Screen share enabled");
       } else {
+        const transceivers = this.peerConnection.getTransceivers();
+        const videoTransceiver = transceivers.find(
+          (t) => t.receiver.track.kind === "video",
+        );
+
+        if (videoTransceiver && videoTransceiver.sender) {
+          await videoTransceiver.sender.replaceTrack(null);
+          videoTransceiver.direction = "recvonly";
+        }
+
         if (this.screenStream) {
           this.screenStream.getTracks().forEach((t) => t.stop());
           this.screenStream = null;
         }
+
+        this.currentLocalStream = this.micStream;
         this.isScreenEnabled = false;
         console.log("[ChatClient] Screen share disabled");
       }
 
-      await this.rebuildCombinedStream(sid);
-      this.emit("local_stream_ready", this.combinedStream);
+      this.emit("local_stream_ready", this.currentLocalStream);
       this.emit("screen_toggled", { enabled: this.isScreenEnabled });
+
+      await this.negotiate(sid);
+      const mode = this.isScreenEnabled ? "Screen" : "Audio";
+      console.log(`[ChatClient] Sending CALL_MODE: ${mode}`);
+      const modePayload = await this.encryptForSession(
+        sid,
+        JSON.stringify({ t: "MSG", data: { type: "CALL_MODE", mode } }),
+        0,
+      );
+      this.send({
+        t: "MSG",
+        sid,
+        data: { payload: modePayload },
+        c: true,
+        p: 0,
+      });
     } catch (e: any) {
       console.error("Error toggling screen share:", e);
       this.emit("notification", {
@@ -661,136 +978,24 @@ export class ChatClient extends EventEmitter {
     }
   }
 
-  private async rebuildCombinedStream(sid: string): Promise<void> {
-    if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
-      this.mediaRecorder.stop();
-    }
-
-    this.combinedStream = new MediaStream();
-
-    if (this.audioDestination) {
-      this.audioDestination.stream.getAudioTracks().forEach((track) => {
-        this.combinedStream!.addTrack(track.clone());
-      });
-    }
-
-    if (this.isVideoEnabled && this.cameraStream) {
-      this.cameraStream.getVideoTracks().forEach((track) => {
-        this.combinedStream!.addTrack(track);
-      });
-    } else if (this.isScreenEnabled && this.screenStream) {
-      this.screenStream.getVideoTracks().forEach((track) => {
-        this.combinedStream!.addTrack(track);
-      });
-    }
-
-    this.currentLocalStream = this.combinedStream;
-
-    const hasVideo = this.combinedStream.getVideoTracks().length > 0;
-    const newMimeType = hasVideo
-      ? "video/webm;codecs=vp8,opus"
-      : "audio/webm;codecs=opus";
-
-    console.log(`[ChatClient] Sending MIME_CHANGE: ${newMimeType}`);
-    const mimePayload = await this.encryptForSession(
-      sid,
-      JSON.stringify({
-        t: "MSG",
-        data: { type: "MIME_CHANGE", mimeType: newMimeType },
-      }),
-      0,
-    );
-    this.send({ t: "MSG", sid, data: { payload: mimePayload } });
-
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
-    await this.startMediaRecorder(sid);
-  }
-
-  private async startMediaRecorder(sid: string): Promise<string> {
-    if (!this.combinedStream) throw new Error("No combined stream");
-
-    const hasVideo = this.combinedStream.getVideoTracks().length > 0;
-    let mimeType = hasVideo
-      ? "video/webm;codecs=vp8,opus"
-      : "audio/webm;codecs=opus";
-    let bitsPerSecond = hasVideo ? 1000000 : 48000;
-
-    if (!MediaRecorder.isTypeSupported(mimeType)) {
-      console.warn(`[ChatClient] ${mimeType} not supported, trying fallback`);
-      if (hasVideo && MediaRecorder.isTypeSupported("video/webm")) {
-        mimeType = "video/webm";
-      } else if (MediaRecorder.isTypeSupported("video/mp4")) {
-        mimeType = "video/mp4";
-      }
-    }
-
-    this.mediaRecorder = new MediaRecorder(this.combinedStream, {
-      mimeType,
-      bitsPerSecond,
-    });
-
-    this.mediaRecorder.ondataavailable = async (e) => {
-      if (e.data.size > 0) {
-        try {
-          const buffer = await e.data.arrayBuffer();
-          const encrypted = await this.encryptForSession(sid, buffer, 0);
-          this.send({
-            t: "MSG",
-            sid,
-            data: { type: "STREAM", payload: encrypted },
-            c: false,
-            p: 0,
-          });
-        } catch (err) {
-          console.error("Encryption streaming error:", err);
-        }
-      }
-    };
-
-    this.mediaRecorder.onstop = () => {
-      console.log("MediaRecorder stopped");
-    };
-
-    this.mediaRecorder.onerror = (e: any) => {
-      console.error("MediaRecorder error:", e);
-    };
-
-    this.mediaRecorder.start(100);
-    console.log(`[ChatClient] MediaRecorder started with ${mimeType}`);
-    return mimeType;
-  }
-
   public async acceptCall(sid: string) {
-    if (!this.sessions[sid]) return;
-    if (this.isCalling) return;
-
+    this.isCalling = true;
+    this.currentCallSid = sid;
     this.stopRingtone();
 
-    try {
-      this.isCalling = true;
-      this.currentCallSid = sid;
-      const mimeType = await this.initializeCallStream(sid);
-      const payload = await this.encryptForSession(
-        sid,
-        JSON.stringify({ t: "MSG", data: { type: "CALL_ACCEPT", mimeType } }),
-        0,
-      );
-      this.send({ t: "MSG", sid, data: { payload } });
-
-      this.callStartTime = Date.now();
-      this.isCallConnected = true;
-      this.emit("call_started", { sid, status: "connected", remoteSid: sid });
-
-      this.setupMediaPlayback();
-    } catch (err) {
-      this.isCalling = false;
-      console.error("Error accepting call:", err);
-      this.emit("notification", {
-        type: "error",
-        message: "Failed to accept call (Microphone error?)",
-      });
+    if (this._pendingOffer && this._pendingOffer.sid === sid) {
+      console.log("[ChatClient] Processing the stashed offer now.");
+      const offerToProcess = this._pendingOffer.offer;
+      this._pendingOffer = null;
+      await this.handleRTCOffer(sid, offerToProcess);
     }
+
+    const payload = await this.encryptForSession(
+      sid,
+      JSON.stringify({ t: "MSG", data: { type: "CALL_ACCEPT" } }),
+      0,
+    );
+    this.send({ t: "MSG", sid, data: { payload }, c: true, p: 0 });
   }
 
   public async endCall(sid?: string) {
@@ -819,11 +1024,10 @@ export class ChatClient extends EventEmitter {
     this.currentCallSid = null;
     this.pendingCallMode = null;
     this.isCallConnected = false;
-    if (this.mediaRecorder) {
-      if (this.mediaRecorder.state !== "inactive") {
-        this.mediaRecorder.stop();
-      }
-      this.mediaRecorder = null;
+
+    if (this.peerConnection) {
+      this.peerConnection.close();
+      this.peerConnection = null;
     }
 
     if (this.micStream) {
@@ -838,54 +1042,27 @@ export class ChatClient extends EventEmitter {
       this.screenStream.getTracks().forEach((t) => t.stop());
       this.screenStream = null;
     }
-    if (this.combinedStream) {
-      this.combinedStream.getTracks().forEach((t) => t.stop());
-      this.combinedStream = null;
-    }
-    if (this.audioContext) {
-      this.audioContext.close().catch(() => {});
-      this.audioContext = null;
-    }
-    this.audioDestination = null;
+
+    this.currentLocalStream = null;
+    this.remoteStream = null;
 
     this.isMicEnabled = true;
     this.isVideoEnabled = false;
     this.isScreenEnabled = false;
 
-    if (this.remoteAudio) {
-      if (this.remoteAudio.src) {
-        URL.revokeObjectURL(this.remoteAudio.src);
-      }
-      this.remoteAudio.pause();
-      this.remoteAudio.src = "";
-      this.remoteAudio = null;
-    }
-
-    if (this.remoteVideo) {
-      if (this.remoteVideo.src) {
-        URL.revokeObjectURL(this.remoteVideo.src);
-      }
-      this.remoteVideo.pause();
-      this.remoteVideo.src = "";
-      this.remoteVideo = null;
-    }
-    this.mediaSource = null;
-    this.sourceBuffer = null;
-    this.audioQueue = [];
-    this.isSourceOpen = false;
-    this.isResettingMedia = false;
-    this.remoteMimeType = null;
-    this.currentLocalStream = null;
     this.emit("local_stream_ready", null);
+    this.emit("remote_stream_ready", null);
   }
 
   public async toggleMic() {
-    if (this.mediaRecorder && this.mediaRecorder.stream) {
+    if (this.micStream) {
       let isMuted = false;
-      this.mediaRecorder.stream.getAudioTracks().forEach((track) => {
+      this.micStream.getAudioTracks().forEach((track) => {
         track.enabled = !track.enabled;
         isMuted = !track.enabled;
       });
+
+      this.isMicEnabled = !isMuted;
 
       if (this.currentCallSid) {
         const micPayload = await this.encryptForSession(
@@ -909,185 +1086,91 @@ export class ChatClient extends EventEmitter {
     return true;
   }
 
-  public getRemoteVideo(): HTMLVideoElement | null {
-    return this.remoteVideo;
+  public getRemoteStream(): MediaStream | null {
+    return this.remoteStream;
   }
 
-  private async setupMediaPlayback(): Promise<void> {
-    if (this.remoteVideo) return;
-    if (this.isMediaSettingUp) {
-      console.log(
-        "[ChatClient] setupMediaPlayback already in progress, waiting...",
-      );
-      return new Promise((resolve) => {
-        const check = setInterval(() => {
-          if (!this.isMediaSettingUp) {
-            clearInterval(check);
-            resolve();
-          }
-        }, 100);
-      });
+  private async handleRTCOffer(sid: string, offer: RTCSessionDescriptionInit) {
+    console.log("[ChatClient] handleRTCOffer");
+
+    if (!this.isCalling) {
+      console.log("[ChatClient] Stashing offer until user answers.");
+      this._pendingOffer = { sid, offer };
+      return;
     }
 
-    this.isMediaSettingUp = true;
+    if (!this.peerConnection) {
+      await this.createPeerConnection(sid);
+      await this.initializeLocalMedia();
+    }
 
-    return new Promise((resolve) => {
-      this.remoteVideo = document.createElement("video");
-      this.remoteVideo!.autoplay = true;
-      this.remoteVideo!.playsInline = true;
+    await this.peerConnection!.setRemoteDescription(offer);
+    await this.flushPendingIce();
 
-      const ms = new MediaSource();
-      this.mediaSource = ms;
-      this.remoteVideo!.src = URL.createObjectURL(ms);
+    const answer = await this.peerConnection!.createAnswer();
+    await this.peerConnection!.setLocalDescription(answer);
 
-      ms.addEventListener("sourceopen", () => {
-        if (this.mediaSource !== ms || ms.sourceBuffers.length > 0) {
-          resolve();
-          return;
-        }
-        if (!this.isCalling && !this.isCallConnected) {
-          console.warn(
-            "[ChatClient] MediaSource open but call ended, ignoring",
-          );
-          resolve();
-          return;
-        }
-
-        try {
-          let mime = this.remoteMimeType || "video/webm;codecs=vp8,opus";
-          if (!MediaSource.isTypeSupported(mime)) {
-            console.warn(
-              `[ChatClient] Prefered mime ${mime} not supported, trying fallbacks`,
-            );
-            mime = "video/webm;codecs=vp8,opus";
-            if (!MediaSource.isTypeSupported(mime)) {
-              mime = "video/webm;codecs=vp8";
-              if (!MediaSource.isTypeSupported(mime)) {
-                mime = "audio/webm;codecs=opus";
-              }
-            }
-          }
-
-          console.log(`[ChatClient] Creating SourceBuffer with ${mime}`);
-          this.sourceBuffer = ms.addSourceBuffer(mime);
-          this.isSourceOpen = true;
-
-          this.sourceBuffer.mode = "sequence";
-          this.sourceBuffer.addEventListener("updateend", () => {
-            this.processQueue();
-          });
-
-          this.emit("remote_stream_ready", this.remoteVideo);
-          this.isMediaSettingUp = false;
-          resolve();
-        } catch (e) {
-          console.error("Error adding SourceBuffer:", e);
-          this.isMediaSettingUp = false;
-          resolve();
-        }
-      });
+    this.sendSignal({
+      type: "RTC_ANSWER",
+      sid,
+      answer,
     });
+
+    this.isCallConnected = true;
+    this.emit("call_started", { sid, status: "connected", remoteSid: sid });
   }
 
-  private async resetMediaPlayback() {
-    console.log("[ChatClient] Resetting MediaSource for new MIME type");
+  private async handleRTCAnswer(
+    sid: string,
+    answer: RTCSessionDescriptionInit,
+  ) {
+    try {
+      console.log("[ChatClient] Received RTC answer from", sid);
 
-    // Set flag to pause incoming stream processing
-    this.isResettingMedia = true;
-
-    if (this.isMediaSettingUp) {
-      console.log(
-        "[ChatClient] resetMediaPlayback waiting for setup to finish...",
-      );
-      await new Promise((resolve) => {
-        const check = setInterval(() => {
-          if (!this.isMediaSettingUp) {
-            clearInterval(check);
-            resolve(true);
-          }
-        }, 100);
-      });
-    }
-
-    // Clear queue
-    this.audioQueue = [];
-    this.isSourceOpen = false;
-
-    // Clean up old SourceBuffer
-    if (this.sourceBuffer) {
-      try {
-        if (this.mediaSource && this.mediaSource.readyState === "open") {
-          this.mediaSource.removeSourceBuffer(this.sourceBuffer);
-        }
-      } catch (e) {
-        console.warn("Error removing SourceBuffer:", e);
+      if (!this.peerConnection) {
+        console.warn("[ChatClient] No peer connection for RTC answer");
+        return;
       }
-      this.sourceBuffer = null;
-    }
 
-    // Clean up old MediaSource
-    if (this.mediaSource) {
-      try {
-        if (this.mediaSource.readyState === "open") {
-          this.mediaSource.endOfStream();
-        }
-      } catch (e) {
-        console.warn("Error ending MediaSource:", e);
-      }
-      this.mediaSource = null;
-    }
-
-    // Force recreation
-    if (this.remoteVideo) {
-      this.remoteVideo.src = "";
-      this.remoteVideo = null;
-    }
-
-    // Immediately recreate and wait for it to be ready
-    await this.setupMediaPlayback();
-
-    // Resume incoming stream processing
-    this.isResettingMedia = false;
-    console.log(
-      "[ChatClient] MediaSource reset complete, ready for new stream",
-    );
-
-    if (this.audioQueue.length > 0) {
-      console.log(
-        `[ChatClient] Processing ${this.audioQueue.length} held chunks after reset`,
+      await this.peerConnection.setRemoteDescription(
+        new RTCSessionDescription(answer),
       );
-      this.processQueue();
+      await this.flushPendingIce();
+      console.log("[ChatClient] Set remote description from answer");
+
+      this.isCallConnected = true;
+      this.emit("call_started", { sid, status: "connected", remoteSid: sid });
+    } catch (err) {
+      console.error("[ChatClient] Error handling RTC answer:", err);
     }
   }
 
-  private processQueue() {
-    if (
-      !this.sourceBuffer ||
-      this.sourceBuffer.updating ||
-      this.audioQueue.length === 0
-    )
-      return;
-
-    if (this.isResettingMedia) {
+  private async handleICECandidate(
+    sid: string,
+    candidate: RTCIceCandidateInit,
+  ) {
+    if (!this.peerConnection || !this.peerConnection.remoteDescription) {
+      this.iceCandidateQueue.push({ sid, candidate });
       return;
     }
-
-    if (this.mediaSource && this.mediaSource.readyState !== "open") {
-      console.warn(
-        `[ChatClient] MediaSource readyState is ${this.mediaSource.readyState}, clearing queue`,
-      );
-      this.audioQueue = [];
-      return;
+    try {
+      await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (err) {
+      console.error("[ChatClient] Error adding ICE candidate:", err);
     }
+  }
 
-    const chunk = this.audioQueue.shift();
-    if (chunk) {
-      try {
-        this.sourceBuffer.appendBuffer(chunk);
-      } catch (e) {
-        console.error("SourceBuffer append error", e);
-        this.audioQueue = [];
-        this.isSourceOpen = false;
+  private async flushPendingIce() {
+    while (this.iceCandidateQueue.length > 0) {
+      const item = this.iceCandidateQueue.shift();
+      if (item) {
+        try {
+          await this.peerConnection?.addIceCandidate(
+            new RTCIceCandidate(item.candidate),
+          );
+        } catch (e) {
+          console.error("[ChatClient] Failed to flush ICE:", e);
+        }
       }
     }
   }
@@ -1125,19 +1208,12 @@ export class ChatClient extends EventEmitter {
       console.log(`[ChatClient] Received ${data.type}:`, data);
 
       switch (data.type) {
-        case "MIME_CHANGE":
-          console.log(`[ChatClient] Received MIME_CHANGE: ${data.mimeType}`);
-          this.remoteMimeType = data.mimeType;
-
-          await this.resetMediaPlayback();
-
-          const newMode = data.mimeType.startsWith("video/")
-            ? "Video"
-            : "Audio";
-          this.emit("call_mode_changed", { sid, mode: newMode });
-          break;
         case "MIC_STATUS":
           this.emit("peer_mic_status", { sid, muted: data.muted });
+          break;
+        case "CALL_MODE":
+          console.log(`[ChatClient] Remote switched to mode: ${data.mode}`);
+          this.emit("call_mode_changed", { sid, mode: data.mode });
           break;
         case "TEXT":
           try {
@@ -1232,7 +1308,6 @@ export class ChatClient extends EventEmitter {
             return;
           }
           console.log("[ChatClient] Received CALL_START");
-          if (data?.mimeType) this.remoteMimeType = data.mimeType;
 
           this.playRingtone();
 
@@ -1241,6 +1316,28 @@ export class ChatClient extends EventEmitter {
             mode: data?.mode || "Audio",
             remoteSid: sid,
           });
+          break;
+
+        case "RTC_OFFER":
+          console.log("[ChatClient] Received RTC_OFFER");
+          if (data?.offer) {
+            await this.handleRTCOffer(sid, data.offer);
+          }
+          break;
+
+        case "RTC_ANSWER":
+          console.log("[ChatClient] Received RTC_ANSWER");
+          if (data?.answer) {
+            await this.handleRTCAnswer(sid, data.answer);
+          }
+          break;
+        // Mark call as connected
+
+        case "ICE_CANDIDATE":
+          console.log("[ChatClient] Received ICE_CANDIDATE");
+          if (data?.candidate) {
+            await this.handleICECandidate(sid, data.candidate);
+          }
           break;
 
         case "CALL_BUSY":
@@ -1254,35 +1351,9 @@ export class ChatClient extends EventEmitter {
           break;
 
         case "CALL_ACCEPT":
-          console.log("[ChatClient] Received CALL_ACCEPT");
-          if (data?.mimeType) this.remoteMimeType = data.mimeType;
-
-          const myMime = await this.initializeCallStream(sid);
-
-          if (this.pendingCallMode === "Video") {
-            await this.toggleVideo(true);
-          } else if (this.pendingCallMode === "Screen") {
-            await this.toggleScreenShare(true);
-          } else {
-            const mimePayload = await this.encryptForSession(
-              sid,
-              JSON.stringify({
-                t: "MSG",
-                data: { type: "MIME_CHANGE", mimeType: myMime },
-              }),
-              0,
-            );
-            this.send({ t: "MSG", sid, data: { payload: mimePayload } });
-          }
-
-          this.setupMediaPlayback();
-          this.isCallConnected = true;
-
-          this.emit("call_started", {
-            sid,
-            status: "connected",
-            remoteSid: sid,
-          });
+          console.log(
+            "[ChatClient] Received CALL_ACCEPT - call is being answered",
+          );
           break;
 
         case "CALL_END":
@@ -1295,6 +1366,26 @@ export class ChatClient extends EventEmitter {
             duration: callDuration,
             connected: wasCallConnected,
           });
+          break;
+
+        case "METADATA":
+          try {
+            const meta = data;
+            this.emit("metadata_response", meta);
+          } catch (e) {
+            console.error("Error handling METADATA", e);
+          }
+          break;
+
+        case "IMAGE_DATA":
+          try {
+            this.emit("image_response", data);
+          } catch (e) {
+            console.error(
+              "Error h// data is already the metadata objectandling IMAGE_DATA",
+              e,
+            );
+          }
           break;
 
         case "PROFILE_VERSION":
@@ -1405,6 +1496,33 @@ export class ChatClient extends EventEmitter {
             this.emit("session_updated");
           } catch (e) {
             console.error("Error handling PROFILE_DATA", e);
+          }
+          break;
+
+        case "REACTION":
+          try {
+            const { messageId, emoji, action, timestamp } = data;
+            const peerEmail = this.sessions[sid]?.peerEmail || sid;
+            if (action === "add") {
+              const id = `${messageId}_${sid}_${emoji}`;
+              await executeDB(
+                "INSERT OR IGNORE INTO reactions (id, message_id, sender_email, emoji, timestamp) VALUES (?, ?, ?, ?, ?)",
+                [id, messageId, peerEmail, emoji, timestamp],
+              );
+            } else {
+              await executeDB(
+                "DELETE FROM reactions WHERE message_id = ? AND sender_email = ? AND emoji = ?",
+                [messageId, peerEmail, emoji],
+              );
+            }
+            this.emit("reaction_update", { messageId });
+            this.emit(`reaction_update:${messageId}`, {
+              messageId,
+              emoji,
+              action,
+            });
+          } catch (e) {
+            console.error("Error handling REACTION", e);
           }
           break;
       }
@@ -1634,39 +1752,6 @@ export class ChatClient extends EventEmitter {
     this.emit("session_updated");
   }
 
-  private async handleStream(sid: string, payload: string) {
-    try {
-      if (this.isResettingMedia) {
-        await new Promise<void>((resolve) => {
-          const check = setInterval(() => {
-            if (!this.isResettingMedia) {
-              clearInterval(check);
-              resolve();
-            }
-          }, 50);
-        });
-      }
-
-      if (!this.remoteVideo) {
-        await this.setupMediaPlayback();
-      }
-
-      const streamData = await this.decryptFromSession(sid, payload, 0);
-      if (streamData) {
-        this.audioQueue.push(streamData);
-        if (
-          this.isSourceOpen &&
-          this.sourceBuffer &&
-          !this.sourceBuffer.updating
-        ) {
-          this.processQueue();
-        }
-      }
-    } catch (e) {
-      console.error("Error handling STREAM payload", e);
-    }
-  }
-
   private async handleFrame(frame: ServerFrame) {
     const { t, sid, data } = frame;
     switch (t) {
@@ -1740,16 +1825,46 @@ export class ChatClient extends EventEmitter {
         await this.finalizeSession(sid, data.publicKey);
         this.emit("joined_success", sid);
         break;
-      case "MSG":
-        if (data.type === "STREAM") {
-          this.messageQueue.enqueue(async () => {
-            await this.handleStream(sid, data.payload);
-          }, 0);
+
+      case "TURN_CREDS":
+        console.log("[ChatClient] Received TURN credentials");
+        if (this.onTurnCreds) {
+          this.onTurnCreds(data);
         } else {
-          this.messageQueue.enqueue(async () => {
-            await this.handleMsg(sid, data.payload);
-          }, frame.p ?? 1);
+          this.turnCreds = data;
         }
+        break;
+
+      case "RTC_OFFER":
+        this.messageQueue.enqueue(
+          "HANDLE_MSG",
+          { sid, payload: data.payload, priority: 0 },
+          0,
+        );
+        break;
+
+      case "RTC_ANSWER":
+        this.messageQueue.enqueue(
+          "HANDLE_MSG",
+          { sid, payload: data.payload, priority: 0 },
+          0,
+        );
+        break;
+
+      case "RTC_ICE":
+        this.messageQueue.enqueue(
+          "HANDLE_MSG",
+          { sid, payload: data.payload, priority: 0 },
+          0,
+        );
+        break;
+
+      case "MSG":
+        this.messageQueue.enqueue(
+          "HANDLE_MSG",
+          { sid, payload: data.payload, priority: frame.p ?? 1 },
+          frame.p ?? 1,
+        );
         break;
 
       case "PEER_ONLINE":
@@ -1961,6 +2076,102 @@ export class ChatClient extends EventEmitter {
       this.audioContext.close().catch(() => {});
       this.audioContext = null;
     }
+  }
+
+  public async fetchMetadata(url: string): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.off("metadata_response", handler);
+        reject(new Error("Metadata fetch timed out"));
+      }, 10000);
+
+      const handler = (data: any) => {
+        if (data.url === url) {
+          clearTimeout(timeout);
+          this.off("metadata_response", handler);
+          resolve(data);
+        }
+      };
+
+      this.on("metadata_response", handler);
+      this.send({
+        t: "FETCH_METADATA",
+        data: { url },
+        c: true,
+        p: 1,
+      });
+    });
+  }
+
+  public async fetchImage(url: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.off("image_response", handler);
+        reject(new Error("Image fetch timed out"));
+      }, 15000);
+
+      const handler = (data: any) => {
+        if (data.url === url) {
+          clearTimeout(timeout);
+          this.off("image_response", handler);
+
+          try {
+            const byteCharacters = atob(data.data);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+              byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], { type: data.mimeType });
+            const objectUrl = URL.createObjectURL(blob);
+            resolve(objectUrl);
+          } catch (e) {
+            reject(new Error("Failed to process image data"));
+          }
+        }
+      };
+
+      this.on("image_response", handler);
+      this.send({
+        t: "FETCH_IMAGE",
+        data: { url },
+        c: true,
+        p: 1,
+      });
+      this.send({
+        t: "FETCH_IMAGE",
+        data: { url },
+        c: true,
+        p: 1,
+      });
+    });
+  }
+
+  public async checkLinkSafety(
+    url: string,
+  ): Promise<"SAFE" | "UNSAFE" | "UNKNOWN"> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.off("link_safety_result", handler);
+        resolve("UNKNOWN");
+      }, 5000);
+
+      const handler = (data: any) => {
+        if (data.url === url) {
+          clearTimeout(timeout);
+          this.off("link_safety_result", handler);
+          resolve(data.status);
+        }
+      };
+
+      this.on("link_safety_result", handler);
+      this.send({
+        t: "CHECK_LINK",
+        data: { url },
+        c: true,
+        p: 1,
+      });
+    });
   }
 }
 

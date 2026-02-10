@@ -3,6 +3,7 @@ import { StorageService } from "../../../../utils/Storage";
 import { MessageBubble } from "./MessageBubble";
 import { PortShareModal } from "./PortShareModal";
 import { MediaModal } from "./MediaModal";
+import EmojiPicker, { EmojiClickData, Theme } from "emoji-picker-react";
 import {
   Send,
   Mic,
@@ -17,7 +18,10 @@ import {
   ArrowLeft,
   X,
   Video,
+  Gift,
+  Smile,
 } from "lucide-react";
+import { GifPicker } from "../../../../components/GifPicker";
 import { ChatMessage, SessionData } from "../../types";
 import { Avatar } from "../../../../components/ui/Avatar";
 import {
@@ -84,6 +88,8 @@ export const ChatWindow = ({
   const [port, setPort] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [mediaModalOpen, setMediaModalOpen] = useState(false);
+  const [showGifPicker, setShowGifPicker] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<{
     url: string;
     type: "image" | "video";
@@ -289,6 +295,10 @@ export const ChatWindow = ({
     setMediaModalOpen(true);
   };
 
+  const onEmojiClick = (emojiData: EmojiClickData) => {
+    setInput((prev) => prev + emojiData.emoji);
+  };
+
   return (
     <ChatContainer>
       <ChatHeader>
@@ -428,10 +438,36 @@ export const ChatWindow = ({
                 e.preventDefault();
                 onSend(input);
                 setInput("");
+                setShowEmojiPicker(false);
+                setShowGifPicker(false);
               }
             }}
             placeholder={isRecording ? "" : "Message..."}
           />
+          <IconButton
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setShowEmojiPicker(!showEmojiPicker);
+              setShowGifPicker(false);
+            }}
+            title="Emoji"
+            style={{ color: "#fbbf24" }}
+          >
+            <Smile size={24} />
+          </IconButton>
+          <IconButton
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setShowGifPicker(!showGifPicker);
+              setShowEmojiPicker(false);
+            }}
+            title="GIFs"
+            style={{ color: "#a78bfa" }}
+          >
+            <Gift size={24} />
+          </IconButton>
         </InputWrapper>
 
         {input.trim().length > 0 ? (
@@ -439,6 +475,8 @@ export const ChatWindow = ({
             onClick={() => {
               onSend(input);
               setInput("");
+              setShowEmojiPicker(false);
+              setShowGifPicker(false);
             }}
           >
             <Send size={20} />
@@ -449,6 +487,24 @@ export const ChatWindow = ({
           </SendButton>
         )}
       </InputContainer>
+
+      {showEmojiPicker && (
+        <div
+          style={{
+            position: "absolute",
+            bottom: "80px",
+            right: "20px",
+            zIndex: 1000,
+          }}
+        >
+          <EmojiPicker
+            onEmojiClick={onEmojiClick}
+            theme={Theme.DARK}
+            width={320}
+            height={400}
+          />
+        </div>
+      )}
 
       <PortShareModal
         isOpen={showPortModal}
@@ -466,6 +522,16 @@ export const ChatWindow = ({
         onClose={() => setMediaModalOpen(false)}
         media={selectedMedia}
       />
+
+      {showGifPicker && (
+        <GifPicker
+          onSelect={(url) => {
+            onSend(url);
+            setShowGifPicker(false);
+          }}
+          onClose={() => setShowGifPicker(false)}
+        />
+      )}
     </ChatContainer>
   );
 };

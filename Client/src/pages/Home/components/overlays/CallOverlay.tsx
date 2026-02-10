@@ -53,7 +53,6 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(false);
   const [isScreenEnabled, setIsScreenEnabled] = useState(false);
-  const videoContainerRef = useRef<HTMLDivElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const localPreviewRef = useRef<HTMLVideoElement | null>(null);
   const [position, setPosition] = useState({ x: 20, y: 20 });
@@ -96,16 +95,30 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
   }, [localStream]);
 
   useEffect(() => {
-    const remoteVideo = client.getRemoteVideo();
-    if (videoContainerRef.current && remoteVideo) {
-      remoteVideoRef.current = remoteVideo;
-      remoteVideo.style.width = "100%";
-      remoteVideo.style.height = "100%";
-      remoteVideo.style.objectFit = "cover";
-      videoContainerRef.current.innerHTML = "";
-      videoContainerRef.current.appendChild(remoteVideo);
+    const handleRemoteStream = (stream: MediaStream | null) => {
+      if (remoteVideoRef.current) {
+        if (stream) {
+          remoteVideoRef.current.srcObject = stream;
+          remoteVideoRef.current.play().catch((err) => {
+            console.error("Error playing remote video:", err);
+          });
+        } else {
+          remoteVideoRef.current.srcObject = null;
+        }
+      }
+    };
+
+    client.on("remote_stream_ready", handleRemoteStream);
+
+    const existingStream = client.getRemoteStream();
+    if (existingStream) {
+      handleRemoteStream(existingStream);
     }
-  }, [callState?.status, videoContainerRef.current, client]);
+
+    return () => {
+      client.off("remote_stream_ready", handleRemoteStream);
+    };
+  }, [client]);
 
   const formatDuration = (seconds: number) => {
     const m = Math.floor(seconds / 60);
@@ -207,9 +220,15 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
         <div
           style={{ flex: 1, position: "relative", backgroundColor: "black" }}
         >
-          <div
-            ref={videoContainerRef}
-            style={{ width: "100%", height: "100%" }}
+          <video
+            ref={remoteVideoRef}
+            autoPlay
+            playsInline
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+            }}
           />
           <MaximizeButton
             onClick={(e) => {
@@ -232,11 +251,14 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
         </MinimizeButton>
 
         <MainVideoArea>
-          <div
-            ref={videoContainerRef}
+          <video
+            ref={remoteVideoRef}
+            autoPlay
+            playsInline
             style={{
               width: "100%",
               height: "100%",
+              objectFit: "cover",
               display:
                 callState.remoteVideo &&
                 (callState.type === "Video" || callState.type === "Screen")

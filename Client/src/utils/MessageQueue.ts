@@ -1,50 +1,80 @@
-export class MessageQueue {
-  private highPriority: Array<() => Promise<void>> = [];
-  private mediumPriority: Array<() => Promise<void>> = [];
-  private lowPriority: Array<() => Promise<void>> = [];
-  private isProcessing = false;
+import { executeDB, queryDB } from "../services/sqliteService";
+import { ChatClient } from "../services/ChatClient";
 
-  enqueue(task: () => Promise<void>, priority: number = 1) {
-    if (priority === 0) {
-      this.highPriority.push(task);
-    } else if (priority === 2) {
-      this.lowPriority.push(task);
-    } else {
-      this.mediumPriority.push(task);
-    }
+interface QueueItem {
+  id: number;
+  type: string;
+  payload: any;
+  priority: number;
+}
+
+export class MessageQueue {
+  private isProcessing = false;
+  private handler: (item: {
+    type: string;
+    payload: any;
+    priority: number;
+  }) => Promise<void>;
+
+  constructor(
+    handler: (item: {
+      type: string;
+      payload: any;
+      priority: number;
+    }) => Promise<void>,
+  ) {
+    this.handler = handler;
+  }
+
+  async init() {
     this.process();
+  }
+
+  async enqueue(type: string, payload: any, priority: number = 1) {
+    try {
+      await executeDB(
+        "INSERT INTO queue (type, payload, priority, timestamp) VALUES (?, ?, ?, ?)",
+        [type, JSON.stringify(payload), priority, Date.now()],
+      );
+      this.process();
+    } catch (e) {
+      console.error("Failed to enqueue task", e);
+    }
   }
 
   private async process() {
     if (this.isProcessing) return;
     this.isProcessing = true;
 
-    while (
-      this.highPriority.length > 0 ||
-      this.mediumPriority.length > 0 ||
-      this.lowPriority.length > 0
-    ) {
-      let task: (() => Promise<void>) | undefined;
+    try {
+      while (true) {
+        const rows = await queryDB(
+          "SELECT * FROM queue ORDER BY priority ASC, timestamp ASC LIMIT 1",
+        );
 
-      if (this.highPriority.length > 0) {
-        task = this.highPriority.shift();
-      } else if (this.mediumPriority.length > 0) {
-        task = this.mediumPriority.shift();
-      } else {
-        task = this.lowPriority.shift();
-      }
+        if (!rows || rows.length === 0) {
+          break;
+        }
 
-      if (task) {
+        const task = rows[0];
         try {
-          await task();
-        } catch (error) {
-          console.error("Error processing queue task:", error);
+          const payload = JSON.parse(task.payload);
+          await this.handler({
+            type: task.type,
+            payload,
+            priority: task.priority,
+          });
+
+         await executeDB("DELETE FROM queue WHERE id = ?", [task.id]);
+        } catch (e) {
+          console.error(`Failed to process task ${task.id}`, e);
+          await executeDB("DELETE FROM queue WHERE id = ?", [task.id]);
         }
       }
-
-      await new Promise((resolve) => setTimeout(resolve, 0));
+    } catch (e) {
+      console.error("Queue processing error", e);
+    } finally {
+      this.isProcessing = false;
     }
-
-    this.isProcessing = false;
   }
 }

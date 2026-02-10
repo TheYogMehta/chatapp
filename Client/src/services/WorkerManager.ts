@@ -2,14 +2,10 @@ import CryptoWorker from "../workers/crypto.worker?worker";
 
 export class WorkerManager {
   private static instance: WorkerManager;
-  private highPriorityWorker: WorkerPool;
-  private mediumPriorityWorker: WorkerPool;
-  private lowPriorityWorker: WorkerPool;
+  private worker: WorkerPool;
 
   private constructor() {
-    this.highPriorityWorker = new WorkerPool(new CryptoWorker());
-    this.mediumPriorityWorker = new WorkerPool(new CryptoWorker());
-    this.lowPriorityWorker = new WorkerPool(new CryptoWorker());
+    this.worker = new WorkerPool(new CryptoWorker());
   }
 
   public static getInstance(): WorkerManager {
@@ -21,11 +17,7 @@ export class WorkerManager {
 
   public async initSession(sid: string, keyJWK: JsonWebKey) {
     const msg = { type: "INIT_SESSION", sid, keyJWK };
-    await Promise.all([
-      this.highPriorityWorker.postMessage(msg),
-      this.mediumPriorityWorker.postMessage(msg),
-      this.lowPriorityWorker.postMessage(msg),
-    ]);
+    await this.worker.postMessage(msg);
   }
 
   public async encrypt(
@@ -35,7 +27,7 @@ export class WorkerManager {
   ): Promise<string> {
     const id = crypto.randomUUID();
     const msg = { type: "ENCRYPT", sid, data, id, priority };
-    return this.getWorker(priority).postMessage(msg);
+    return this.worker.postMessage(msg);
   }
 
   public async decrypt(
@@ -45,13 +37,7 @@ export class WorkerManager {
   ): Promise<ArrayBuffer> {
     const id = crypto.randomUUID();
     const msg = { type: "DECRYPT", sid, data, id, priority };
-    return this.getWorker(priority).postMessage(msg);
-  }
-
-  private getWorker(priority: number): WorkerPool {
-    if (priority === 0) return this.highPriorityWorker;
-    if (priority === 2) return this.lowPriorityWorker;
-    return this.mediumPriorityWorker;
+    return this.worker.postMessage(msg);
   }
 }
 

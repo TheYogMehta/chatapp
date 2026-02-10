@@ -3,3 +3,4 @@ Server/server.log
 Client/android/keystore.properties
 Client/android/app/chatapp-release.jks
 Client/android/app/release/*
+Server/.env

@@ -2,21 +2,30 @@ package main
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha1"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
-	"math/rand"
+	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/joho/godotenv"
+
+	crand "crypto/rand"
 )
+
 
 type Frame struct {
 	T    string          `json:"t"`
@@ -87,13 +96,12 @@ func (rl *RateLimiter) checkAuthRateLimit(ip string) bool {
 	return true
 }
 
-
-
 func (s *Server) newID() string {
-	b := make([]byte, 4)
-	rand.Read(b)
-	return fmt.Sprintf("%d_%s", time.Now().UnixMilli(), hex.EncodeToString(b))
+  b := make([]byte, 8)
+  crand.Read(b)
+  return fmt.Sprintf("%d_%s", time.Now().UnixMilli(), hex.EncodeToString(b))
 }
+
 
 func verifyGoogleToken(token string) (string, error) {
 	resp, err := http.Get("https://oauth2.googleapis.com/tokeninfo?id_token=" + token)
@@ -144,12 +152,30 @@ func (s *Server) logConnection(initiator, target string) {
 	s.logger.Printf("CONNECTION: %s requested connection to %s on %s", iHash, tHash, time.Now().Format(time.RFC3339))
 }
 
+func GenerateTurnCreds(userId, secret string) (string, string) {
+    expiry := time.Now().Add(10 * time.Minute).Unix()
+    username := fmt.Sprintf("%d:%s", expiry, userId)
+    mac := hmac.New(sha1.New, []byte(secret))
+    mac.Write([]byte(username))
+    password := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+
+    return username, password
+}
+
 var sessionSecret []byte
 
 func init() {
-	sessionSecret = make([]byte, 32)
-	rand.Read(sessionSecret)
-} 
+  if err := godotenv.Load(); err != nil {
+    log.Println("⚠️ No .env file found, relying on environment variables")
+  }
+
+  sessionSecret = make([]byte, 32)
+  rand.Read(sessionSecret)
+
+  if os.Getenv("TURN_SECRET") == "" {
+    log.Fatal("❌ TURN_SECRET is not set")
+  }
+}
 
 func generateSessionToken(email string) string {
 	exp := time.Now().Add(30 * 24 * time.Hour).Unix()
@@ -262,7 +288,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			ip := strings.Split(r.RemoteAddr, ":")[0]
 			if !s.rateLimiter.checkAuthRateLimit(ip) {
 				s.send(client, Frame{T: "ERROR", Data: json.RawMessage(`{"message":"Too many login attempts. Try again later."}`)})
-				// Optional: Close connection to discourage spam
+				client.conn.Close()
 				return
 			}
 
@@ -284,9 +310,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			if oldClientID, exists := s.emailToClientId[email]; exists {
 				if _, ok := s.clients[oldClientID]; ok {
 					s.mu.Unlock()
-					// Reject NEW client
 					s.send(client, Frame{T: "ERROR", Data: json.RawMessage(`{"message":"Already logged in on another device"}`)})
-					return 
+					client.conn.Close()
+					return
 				}
 			}
 			s.emailToClientId[email] = client.id
@@ -300,19 +326,24 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			s.send(client, Frame{T: "AUTH_SUCCESS", Data: json.RawMessage(respBytes)})
 
 		case "CONNECT_REQ":
+			if client.email == "" {
+				s.send(client, Frame{
+					T: "ERROR",
+					Data: json.RawMessage(`{"message":"Auth required"}`),
+				})
+				continue
+			}
 			client.mu.Lock()
+
 			if time.Since(client.lastConnect) < 5*time.Second {
 				client.mu.Unlock()
 				s.send(client, Frame{T: "ERROR", Data: json.RawMessage(`{"message":"Rate limit exceeded: Wait 5s between connection requests"}`)})
 				continue
 			}
+
 			client.lastConnect = time.Now()
 			client.mu.Unlock()
 
-			if client.email == "" {
-				s.send(client, Frame{T: "ERROR", Data: json.RawMessage(`{"message":"Authentication required"}`)})
-				continue
-			}
 			var d struct {
 				TargetEmail string `json:"targetEmail"`
 				PublicKey   string `json:"publicKey"`
@@ -344,6 +375,13 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			}
 
 		case "JOIN_ACCEPT":
+			if client.email == "" {
+				s.send(client, Frame{
+					T: "ERROR",
+					Data: json.RawMessage(`{"message":"Auth required"}`),
+				})
+				continue
+			}
 			s.mu.Lock()
 			if sess, ok := s.sessions[frame.SID]; ok {
 				sess.mu.Lock()
@@ -358,6 +396,13 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			s.mu.Unlock()
 
 	    case "JOIN_DENY":
+			if client.email == "" {
+				s.send(client, Frame{
+					T: "ERROR",
+					Data: json.RawMessage(`{"message":"Auth required"}`),
+				})
+				continue
+			}
 			s.mu.Lock()
 			if sess, ok := s.sessions[frame.SID]; ok {
 				sess.mu.Lock()
@@ -412,6 +457,13 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 				)
 		
 		case "MSG":
+			if client.email == "" {
+				s.send(client, Frame{
+					T: "ERROR",
+					Data: json.RawMessage(`{"message":"Auth required"}`),
+				})
+				continue
+			}
 			delivered := false
 			s.mu.Lock()
 
@@ -453,9 +505,309 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 					s.send(client, Frame{T: "DELIVERED_FAILED", SID: frame.SID})
 				}
 			}
+	
+		case "RTC_OFFER":
+			if client.email == "" {
+				s.send(client, Frame{
+					T: "ERROR",
+					Data: json.RawMessage(`{"message":"Auth required"}`),
+				})
+				continue
+			}
+			s.mu.Lock()
+			sess := s.sessions[frame.SID]
+			s.mu.Unlock()
+
+			if sess == nil { break }
+
+			sess.mu.Lock()
+			for _, c := range sess.clients {
+				if c.id != client.id {
+					s.send(c, frame)
+				}
+			}
+			sess.mu.Unlock()
+
+		case "RTC_ANSWER":
+			if client.email == "" {
+				s.send(client, Frame{
+					T: "ERROR",
+					Data: json.RawMessage(`{"message":"Auth required"}`),
+				})
+				continue
+			}
+			s.mu.Lock()
+			sess := s.sessions[frame.SID]
+			s.mu.Unlock()
+
+			if sess == nil { break }
+
+		sess.mu.Lock()
+		for _, c := range sess.clients {
+			if c.id != client.id {
+				s.send(c, frame)
+			}
+		}
+		sess.mu.Unlock()
+
+		case "RTC_ICE":
+			if client.email == "" {
+				s.send(client, Frame{
+					T: "ERROR",
+					Data: json.RawMessage(`{"message":"Auth required"}`),
+				})
+				continue
+			}
+			s.mu.Lock()
+			sess := s.sessions[frame.SID]
+			s.mu.Unlock()
+
+			if sess == nil { break }
+
+			sess.mu.Lock()
+			for _, c := range sess.clients {
+				if c.id != client.id {
+					s.send(c, frame)
+				}
+			}
+			sess.mu.Unlock()
+
+		case "GET_TURN_CREDS":
+			if client.email == "" {
+				s.send(client, Frame{
+					T: "ERROR",
+					Data: json.RawMessage(`{"message":"Auth required"}`),
+				})
+				continue
+			}
+
+			username, password := GenerateTurnCreds(client.email, os.Getenv("TURN_SECRET"))
+			turnHost := os.Getenv("TURN_HOST")
+			
+			resp := map[string]any{
+				"urls": []string{
+					"turn:" + turnHost + ":3478?transport=udp",
+					"turn:" + turnHost + ":3478?transport=tcp",
+				},
+				"username":   username,
+				"credential": password,
+				"ttl":        600,
+			}
+
+			respBytes, _ := json.Marshal(resp)
+			s.send(client, Frame{
+				T:    "TURN_CREDS",
+				Data: json.RawMessage(respBytes),
+			})
+
+		case "FETCH_METADATA":
+			if client.email == "" {
+				s.send(client, Frame{
+					T:    "ERROR",
+					Data: json.RawMessage(`{"message":"Auth required"}`),
+				})
+				continue
+			}
+			
+			var req struct {
+				URL string `json:"url"`
+			}
+			if err := json.Unmarshal(frame.Data, &req); err != nil {
+				continue
+			}
+
+			go func() {
+				httpClient := &http.Client{Timeout: 5 * time.Second}
+				r, _ := http.NewRequest("GET", req.URL, nil)
+				r.Header.Set("User-Agent", "ChatAppbot/1.0")
+				
+				resp, err := httpClient.Do(r)
+				if err != nil {
+					s.send(client, Frame{T: "METADATA", Data: json.RawMessage(`{}`)})
+					return 
+				}
+				defer resp.Body.Close()
+
+				contentType := resp.Header.Get("Content-Type")
+				meta := UrlMetadata{Url: req.URL}
+
+				if strings.HasPrefix(contentType, "image/") {
+					meta.Type = "image"
+					meta.Image = req.URL
+					meta.Title = req.URL 
+				} else {
+					bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+					bodyStr := string(bodyBytes)
+					
+					reTitle := regexp.MustCompile(`<meta\s+(?:property|name)=["']og:title["']\s+content=["'](.*?)["']`)
+					reDesc := regexp.MustCompile(`<meta\s+(?:property|name)=["']og:description["']\s+content=["'](.*?)["']`)
+					reImage := regexp.MustCompile(`<meta\s+(?:property|name)=["']og:image["']\s+content=["'](.*?)["']`)
+					reHtmlTitle := regexp.MustCompile(`<title>(.*?)</title>`)
+
+					if match := reTitle.FindStringSubmatch(bodyStr); len(match) > 1 {
+						meta.Title = htmlUnescape(match[1])
+					} else if match := reHtmlTitle.FindStringSubmatch(bodyStr); len(match) > 1 {
+						meta.Title = htmlUnescape(match[1])
+					}
+					if match := reDesc.FindStringSubmatch(bodyStr); len(match) > 1 {
+						meta.Description = htmlUnescape(match[1])
+					}
+					if match := reImage.FindStringSubmatch(bodyStr); len(match) > 1 {
+						meta.Image = match[1]
+					}
+				}
+
+				respBytes, _ := json.Marshal(meta)
+				s.send(client, Frame{
+					T: "METADATA",
+					Data: respBytes,
+				})
+			}()
+
+		case "FETCH_IMAGE":
+			if client.email == "" {
+				s.send(client, Frame{
+					T:    "ERROR",
+					Data: json.RawMessage(`{"message":"Auth required"}`),
+				})
+				continue
+			}
+
+			var req struct {
+				URL string `json:"url"`
+			}
+			if err := json.Unmarshal(frame.Data, &req); err != nil {
+				continue
+			}
+
+			go func() {
+				httpClient := &http.Client{Timeout: 10 * time.Second}
+				r, _ := http.NewRequest("GET", req.URL, nil)
+				r.Header.Set("User-Agent", "ChatAppbot/1.0")
+
+				resp, err := httpClient.Do(r)
+				if err != nil {
+					return
+				}
+				defer resp.Body.Close()
+
+				data, err := io.ReadAll(resp.Body)
+				if err != nil {
+					return
+				}
+
+				// Convert to base64
+				b64 := base64.StdEncoding.EncodeToString(data)
+				
+				respData := struct {
+					URL      string `json:"url"`
+					Data     string `json:"data"`
+					MimeType string `json:"mimeType"`
+				}{
+					URL:      req.URL,
+					Data:     b64,
+					MimeType: resp.Header.Get("Content-Type"),
+				}
+
+				b, _ := json.Marshal(respData)
+
+				s.send(client, Frame{
+					T:    "IMAGE_DATA",
+					Data: b,
+				})
+			}()
+
+
+
+		case "CHECK_LINK":
+			if client.email == "" {
+				s.send(client, Frame{
+					T:    "ERROR",
+					Data: json.RawMessage(`{"message":"Auth required"}`),
+				})
+				continue
+			}
+
+			var req struct {
+				URL string `json:"url"`
+			}
+			if err := json.Unmarshal(frame.Data, &req); err != nil {
+				continue
+			}
+
+			status := checkLinkSafety(req.URL)
+			
+			resp := map[string]string{
+				"url":    req.URL,
+				"status": status, // SAFE, UNSAFE, UNKNOWN
+			}
+			respBytes, _ := json.Marshal(resp)
+
+			s.send(client, Frame{
+				T:    "LINK_SAFETY_RESULT",
+				Data: json.RawMessage(respBytes),
+			})
+		}
 	}
 }
+
+
+
+type UrlMetadata struct {
+    Title       string `json:"title"`
+    Description string `json:"description"`
+    Image       string `json:"image"`
+    Url         string `json:"url"`
+    Type        string `json:"type"`
 }
+
+
+
+
+func checkLinkSafety(urlStr string) string {
+	// 1. Basic URL parsing
+	u, err := http.NewRequest("GET", urlStr, nil)
+	if err != nil {
+		return "UNSAFE" // Malformed
+	}
+
+	hostname := u.URL.Hostname()
+	
+	// 2. Server-side Blacklist (Expandable)
+	blacklist := []string{
+		"unsafe.com", 
+		"malware.com", 
+		"phishing.site",
+	}
+	for _, bad := range blacklist {
+		if hostname == bad || strings.HasSuffix(hostname, "."+bad) {
+			return "UNSAFE"
+		}
+	}
+
+	// 3. DNS Verification (Does domain exist?)
+	// This prevents some random generated phishing domains that might not even resolve yet
+	// or catches complete gibberish.
+	_, err = net.LookupHost(hostname)
+	if err != nil {
+		return "UNKNOWN" // Could not resolve, treat as unknown/suspicious
+	}
+
+	// 4. (Optional) Google Safe Browsing API could go here
+    // if apiKey != "" { ... }
+
+	return "SAFE" // Passed basic checks
+}
+
+func htmlUnescape(s string) string {
+    s = strings.ReplaceAll(s, "&quot;", "\"")
+    s = strings.ReplaceAll(s, "&amp;", "&")
+    s = strings.ReplaceAll(s, "&lt;", "<")
+    s = strings.ReplaceAll(s, "&gt;", ">")
+    s = strings.ReplaceAll(s, "&#39;", "'")
+    return s
+}
+
 
 func main() {
 	f, err := os.OpenFile("connections.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
@@ -474,6 +826,7 @@ func main() {
 		},
 	}
 	http.HandleFunc("/", s.handle)
+
 	log.Println("✅ Secure E2E Relay Server running on :9000")
 	http.ListenAndServe(":9000", nil)
 }

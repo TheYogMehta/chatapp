@@ -7,11 +7,7 @@ import type { MenuItemConstructorOptions } from "electron";
 import { app, MenuItem, ipcMain, session, BrowserWindow } from "electron";
 import electronIsDev from "electron-is-dev";
 import unhandled from "electron-unhandled";
-import { autoUpdater } from "electron-updater";
 import keytar from "keytar";
-import fs from "fs";
-import path from "path";
-import { spawn } from "child_process";
 
 import {
   ElectronCapacitorApp,

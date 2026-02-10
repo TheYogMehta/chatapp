@@ -75,9 +75,42 @@ const SCHEMA = {
       "CREATE INDEX IF NOT EXISTS idx_shares_msg ON live_shares(message_id);",
     ],
   },
+  reactions: {
+    columns: `
+      id TEXT PRIMARY KEY,
+      message_id TEXT,
+      sender_email TEXT,
+      emoji TEXT,
+      timestamp INTEGER,
+      FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
+    `,
+    indices: [
+      "CREATE INDEX IF NOT EXISTS idx_reactions_msg ON reactions(message_id);",
+    ],
+  },
+  queue: {
+    columns: `
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT,
+      payload TEXT,
+      priority INTEGER,
+      timestamp INTEGER
+    `,
+    indices: [
+      "CREATE INDEX IF NOT EXISTS idx_queue_priority ON queue(priority, timestamp);",
+    ],
+  },
 };
 
-const tableOrder = ["me", "sessions", "messages", "media", "live_shares"];
+const tableOrder = [
+  "me",
+  "sessions",
+  "messages",
+  "media",
+  "live_shares",
+  "reactions",
+  "queue",
+];
 
 export const getCurrentDbName = () => currentDbName;
 

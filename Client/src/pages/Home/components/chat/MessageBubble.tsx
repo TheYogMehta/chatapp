@@ -10,10 +10,21 @@ import {
   FileIcon,
   Loader2,
   Reply,
+  Smile,
+  Plus,
   Globe,
   Check,
   CheckCheck,
 } from "lucide-react";
+import { EmojiPicker } from "../../../../components/EmojiPicker";
+import Microlink from "@microlink/react";
+import { UnsafeLinkModal } from "./UnsafeLinkModal";
+import { queryDB } from "../../../../services/sqliteService";
+import { Reaction } from "../../types";
+import {
+  isTrustedUrl,
+  addTrustedDomain,
+} from "../../../../utils/trustedDomains";
 import {
   BubbleWrapper,
   Bubble,
@@ -176,6 +187,86 @@ export const MessageBubble = ({
   const [isDecrypted, setIsDecrypted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isRequestingDownload, setIsRequestingDownload] = useState(false);
+
+  const [reactions, setReactions] = useState<Reaction[]>([]);
+  const [showPicker, setShowPicker] = useState(false);
+  const [unsafeLink, setUnsafeLink] = useState<{
+    url: string;
+    type: "unsafe" | "unknown";
+    isLoading?: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    loadReactions();
+
+    const onUpdate = (e: any) => {
+      loadReactions();
+    };
+
+    ChatClient.on(`reaction_update:${msg.id}`, onUpdate);
+    return () => {
+      ChatClient.off(`reaction_update:${msg.id}`, onUpdate);
+    };
+  }, [msg.id]);
+
+  const loadReactions = async () => {
+    try {
+      const rows = await queryDB(
+        "SELECT * FROM reactions WHERE message_id = ?",
+        [msg.id],
+      );
+      setReactions(rows);
+    } catch (e) {
+      console.error("Failed to load reactions", e);
+    }
+  };
+
+  const handleReaction = (emojiData: any) => {
+    if (msg.sid && msg.id) {
+      ChatClient.sendReaction(msg.sid, msg.id, emojiData.emoji, "add");
+      setShowPicker(false);
+    }
+  };
+
+  const toggleReaction = (emoji: string) => {
+    const myReaction = reactions.find(
+      (r) => r.emoji === emoji && r.senderEmail === "me",
+    );
+    if (myReaction && msg.sid && msg.id) {
+      ChatClient.sendReaction(msg.sid, msg.id, emoji, "remove");
+    } else if (msg.sid && msg.id) {
+      ChatClient.sendReaction(msg.sid, msg.id, emoji, "add");
+    }
+  };
+
+  const handleLinkClick = async (e: React.MouseEvent, url: string) => {
+    // If trusted, let the browser handle the click natively (avoids popup blockers)
+    if (isTrustedUrl(url)) {
+      return;
+    }
+
+    e.preventDefault();
+    // continue with safety check...
+
+    console.log("Link not trusted (or not in local list), checking safety...");
+    setUnsafeLink({ url, type: "unknown", isLoading: true });
+
+    try {
+      const status = await ChatClient.checkLinkSafety(url);
+      console.log("Safety status:", status);
+
+      if (status === "SAFE") {
+        setUnsafeLink({ url, type: "unknown", isLoading: false });
+      } else if (status === "UNSAFE") {
+        setUnsafeLink({ url, type: "unsafe", isLoading: false });
+      } else {
+        setUnsafeLink({ url, type: "unknown", isLoading: false });
+      }
+    } catch (e) {
+      console.error("Failed to check link safety", e);
+      setUnsafeLink({ url, type: "unknown", isLoading: false });
+    }
+  };
 
   useEffect(() => {
     if (prevMsgId.current !== msg.id) {
@@ -379,8 +470,9 @@ export const MessageBubble = ({
           <MediaContainer>
             <video
               src={imageSrc}
-              controls={false} // Custom playback via modal
+              controls={false}
               onClick={(e) => {
+                e.preventDefault();
                 e.stopPropagation();
                 onMediaClick?.(imageSrc || "", "video", msg.text);
               }}
@@ -541,6 +633,14 @@ export const MessageBubble = ({
     setIsSwiping(false);
   };
 
+  const urlMatch = msg.text?.match(/(https?:\/\/[^\s]+)/);
+  const firstUrl = urlMatch ? urlMatch[0] : null;
+
+  const groupedReactions = reactions.reduce((acc: any, r) => {
+    acc[r.emoji] = (acc[r.emoji] || 0) + 1;
+    return acc;
+  }, {});
+
   const isValidDate = (d: any) => d instanceof Date && !isNaN(d.getTime());
   const safeDate = new Date(msg.timestamp);
   const timeString = isValidDate(safeDate)
@@ -678,7 +778,6 @@ export const MessageBubble = ({
           renderMediaContent() || (
             <div style={{ whiteSpace: "pre-wrap", overflowWrap: "break-word" }}>
               {msg.text &&
-                // Basic link detection
                 msg.text.split(/(https?:\/\/[^\s]+)/g).map((part, i) =>
                   part.match(/https?:\/\//) ? (
                     <a
@@ -686,6 +785,8 @@ export const MessageBubble = ({
                       href={part}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={(e) => handleLinkClick(e, part)}
+                      style={{ color: "#60a5fa", cursor: "pointer" }}
                     >
                       {part}
                     </a>
@@ -693,8 +794,149 @@ export const MessageBubble = ({
                     part
                   ),
                 )}
+              {firstUrl && !msg.mediaFilename && (
+                <div style={{ marginTop: "8px", maxWidth: "400px" }}>
+                  {isTrustedUrl(firstUrl) &&
+                  /\.(jpeg|jpg|gif|png|webp|svg)$/i.test(
+                    new URL(firstUrl).pathname,
+                  ) ? (
+                    <MediaContainer>
+                      <img
+                        src={firstUrl}
+                        alt="preview"
+                        style={{
+                          width: "100%",
+                          height: "auto",
+                          maxHeight: "300px",
+                          borderRadius: "8px",
+                          cursor: "zoom-in",
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          onMediaClick?.(firstUrl, "image", msg.text);
+                        }}
+                      />
+                    </MediaContainer>
+                  ) : (
+                    <Microlink
+                      url={firstUrl}
+                      style={{
+                        fontFamily: "inherit",
+                        backgroundColor: "rgba(0,0,0,0.2)",
+                        border: "1px solid rgba(255,255,255,0.1)",
+                        borderRadius: "8px",
+                        color: "white",
+                      }}
+                      theme="dark"
+                      media={["video", "audio", "image", "logo"]}
+                    />
+                  )}
+                </div>
+              )}
             </div>
           )
+        )}
+
+        {/* Reactions UI */}
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "4px",
+            marginTop: "4px",
+          }}
+        >
+          {Object.entries(groupedReactions).map(([emoji, count]) => (
+            <div
+              key={emoji as string}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleReaction(emoji as string);
+              }}
+              style={{
+                background: "rgba(255,255,255,0.1)",
+                borderRadius: "12px",
+                padding: "2px 6px",
+                fontSize: "0.75rem",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: "2px",
+              }}
+            >
+              <span>{emoji as string}</span>
+              <span style={{ opacity: 0.7 }}>{count as number}</span>
+            </div>
+          ))}
+
+          <div
+            className="reaction-add-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowPicker(!showPicker);
+            }}
+            style={{
+              background: "rgba(255,255,255,0.05)",
+              borderRadius: "50%",
+              width: "24px",
+              height: "24px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              opacity: 0,
+              transition: "opacity 0.2s",
+              position: "relative",
+            }}
+          >
+            <Smile size={14} />
+          </div>
+          <style>{`
+                .reaction-add-btn { opacity: 0; }
+                div:hover > .reaction-add-btn { opacity: 1; }
+                .reaction-add-btn:hover { background: rgba(255,255,255,0.2) !important; opacity: 1 !important; }
+            `}</style>
+        </div>
+
+        {showPicker && (
+          <div onClick={(e) => e.stopPropagation()}>
+            <EmojiPicker
+              onEmojiClick={handleReaction}
+              onClose={() => setShowPicker(false)}
+            />
+          </div>
+        )}
+
+        {unsafeLink && (
+          <UnsafeLinkModal
+            url={unsafeLink.url}
+            type={unsafeLink.type}
+            isLoading={unsafeLink.isLoading}
+            onConfirm={() => {
+              window.open(unsafeLink.url, "_blank", "noopener,noreferrer");
+              setUnsafeLink(null);
+            }}
+            onTrust={
+              unsafeLink.type === "unknown"
+                ? () => {
+                    try {
+                      const hostname = new URL(unsafeLink.url).hostname;
+                      addTrustedDomain(hostname);
+                      window.open(
+                        unsafeLink.url,
+                        "_blank",
+                        "noopener,noreferrer",
+                      );
+                      setUnsafeLink(null);
+                    } catch (e) {
+                      console.error("Invalid URL", e);
+                    }
+                  }
+                : undefined
+            }
+            onCancel={() => setUnsafeLink(null)}
+          />
         )}
 
         <div

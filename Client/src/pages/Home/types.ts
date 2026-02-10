@@ -1,3 +1,11 @@
+export interface Reaction {
+  id: string;
+  messageId: string;
+  senderEmail: string;
+  emoji: string;
+  timestamp: number;
+}
+
 export interface ChatMessage {
   sid: string;
   sender: "me" | "other" | "system";
@@ -51,6 +59,7 @@ export interface ChatMessage {
     mediaFilename?: string;
     thumbnail?: string;
   };
+  reactions?: Reaction[];
 }
 
 export interface InboundReq {

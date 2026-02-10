@@ -142,7 +142,7 @@ For issues, questions, or feature requests, please open an issue on the reposito
 
 ## 🗺️ Roadmap
 
-- [ ] App Vault Tagging System
+- [ ] App Vault Tagging System & One Time Otp With google authenticator
 - [ ] Search in Vault & Chats
 - [ ] Video Player
 - [ ] Video Call
@@ -151,9 +151,8 @@ For issues, questions, or feature requests, please open an issue on the reposito
 - [ ] Add Users With QR Code
 - [ ] Add Users With Bluetooth
 - [ ] Add Users With NFC
-- [ ] Self-destructing messages
-- [ ] Empheral Chats
 - [ ] Backup & Restore
+- [ ] Load External Media (Images) via server
 
 ## 📖 Additional Resources
 

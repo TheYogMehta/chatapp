@@ -24,6 +24,7 @@ The server is a lightweight Go application.
    ```bash
    go mod init socket
    go get github.com/gorilla/websocket
+   go get github.com/joho/godotenv
    ```
 
 ### Running the Server
