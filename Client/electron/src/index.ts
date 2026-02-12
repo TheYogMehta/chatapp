@@ -15,6 +15,8 @@ import {
   setupReloadWatcher,
 } from "./setup";
 
+app.commandLine.appendSwitch("disable-http-cache");
+
 // Graceful handling of unhandled errors.
 unhandled();
 

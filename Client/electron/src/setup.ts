@@ -128,7 +128,16 @@ export class ElectronCapacitorApp {
 
     server.listen(5173, () => {
       console.log("Running at http://localhost:5173");
-      thisRef.MainWindow.loadURL("http://localhost:5173");
+      void thisRef.MainWindow.webContents.session
+        .clearCache()
+        .then(() =>
+          thisRef.MainWindow.webContents.session.clearStorageData({
+            storages: ["serviceworkers"],
+          }),
+        )
+        .finally(() => {
+          thisRef.MainWindow.loadURL("http://localhost:5173");
+        });
     });
   }
 
