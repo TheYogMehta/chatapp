@@ -74,6 +74,14 @@ export class ChatClient extends EventEmitter implements IChatClient {
     socket.on("WS_DISCONNECTED", () => {
       console.log("[ChatClient] WS Disconnected");
     });
+
+    socket.on("error", (err) => {
+      console.error("[ChatClient] Socket Error:", err);
+      this.emit("notification", {
+        type: "error",
+        message: "Connection failed. Retrying...",
+      });
+    });
   }
 
   static getInstance() {

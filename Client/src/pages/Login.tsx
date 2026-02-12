@@ -81,7 +81,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
       </HeaderSection>
 
       <LoginCard>
-        <LogoIcon>Yog</LogoIcon>
+        <LogoIcon>C</LogoIcon>
         <WelcomeTitle>Welcome Back</WelcomeTitle>
         <WelcomeText>
           Sign in to verify your identity and start chatting securely with your
