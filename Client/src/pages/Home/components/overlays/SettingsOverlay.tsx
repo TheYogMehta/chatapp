@@ -12,6 +12,7 @@ import ChatClient from "../../../../services/core/ChatClient";
 import {
   getKeyFromSecureStorage,
   setKeyFromSecureStorage,
+  setActiveUser,
 } from "../../../../services/storage/SafeStorage";
 import UserAvatar from "../../../../components/UserAvatar";
 import { ModalOverlay } from "./Overlay.styles";
@@ -102,6 +103,9 @@ export const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
 
             await StorageService.deleteProfileImage(dbName);
             await deleteDatabase(dbName);
+
+            // Ensure we have permission to delete keys
+            await setActiveUser(currentUserEmail);
 
             const keysToClear = [
               "app_lock_pin",

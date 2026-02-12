@@ -1,4 +1,5 @@
 import { CapacitorSQLite } from "@capacitor-community/sqlite";
+import { Capacitor } from "@capacitor/core";
 import { Filesystem, Directory } from "@capacitor/filesystem";
 
 let dbReady: Promise<void> | null = null;
@@ -306,24 +307,32 @@ export const deleteDatabase = async (databaseName: string = currentDbName) => {
         database: databaseName,
         readonly: false,
       });
-    } catch (ignore) {
+    } catch (closeError) {
       // ignore
     }
 
-    try {
-      await CapacitorSQLite.deleteDatabase({
-        database: databaseName,
-      });
-      if (databaseName === currentDbName) {
-        dbReady = null;
-      }
-      console.log(`[sqlite] Deleted database via plugin: ${databaseName}`);
-      return;
-    } catch (ignore) {
-      // Fallback to file-level cleanup below.
-    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
 
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (Capacitor.getPlatform() === "electron") {
+      try {
+        console.log(
+          "[sqlite] Checking for window.electron:",
+          !!window.electron,
+        );
+        if (window.electron && window.electron.forceDeleteDatabase) {
+          console.log(
+            `[sqlite] Attempting force delete via IPC for ${databaseName}`,
+          );
+          await window.electron.forceDeleteDatabase(databaseName);
+        } else {
+          console.warn(
+            "[sqlite] window.electron or forceDeleteDatabase not found",
+          );
+        }
+      } catch (e) {
+        console.warn("[sqlite] Failed to call forceDeleteDatabase", e);
+      }
+    }
 
     const targets = [
       `${databaseName}SQLite.db`,
@@ -332,27 +341,31 @@ export const deleteDatabase = async (databaseName: string = currentDbName) => {
       `${databaseName}SQLite.db-shm`,
     ];
 
-    let filesDeleted = 0;
     for (const file of targets) {
       try {
         await Filesystem.deleteFile({
           path: file,
           directory: Directory.Data,
         });
-        filesDeleted++;
         console.log(`[sqlite] Deleted file via FS: ${file}`);
       } catch (err) {
-        // Ignored
+        // ignore
       }
     }
 
-    if (filesDeleted > 0) {
-      dbReady = null;
-      console.log(`[sqlite] Deleted database files via filesystem.`);
-      return;
+    const stillExists = await CapacitorSQLite.isDatabase({
+      database: databaseName,
+    });
+    if (!stillExists.result) {
+      if (databaseName === currentDbName) {
+        dbReady = null;
+      }
+      console.log(`[sqlite] Database deletion confirmed: ${databaseName}`);
     } else {
       console.error(`[sqlite] Failed to delete database ${databaseName}`);
     }
+
+    console.error(`[sqlite] Failed to delete database ${databaseName}`);
   } catch (e) {
     console.error(`[sqlite] Failed to delete database ${databaseName}`, e);
   }

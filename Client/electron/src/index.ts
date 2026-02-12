@@ -215,3 +215,42 @@ ipcMain.handle(
     return keytar.setPassword("ChatApp", key, value);
   },
 );
+
+// ============================================================================
+// Database Management
+// ============================================================================
+import fs from "fs";
+import path from "path";
+
+ipcMain.handle("ForceDeleteDatabase", async (_event, dbName: string) => {
+  console.log(`[Main] ForceDeleteDatabase called for: ${dbName}`);
+  try {
+    const homeDir = app.getPath("home");
+    let dbBasePath = "";
+
+    if (process.platform === "win32") {
+      dbBasePath = path.join("C:\\ProgramData", "chatapp");
+    } else {
+      dbBasePath = path.join(homeDir, "Databases", "chatapp");
+    }
+
+    const extensions = [
+      "SQLite.db",
+      "SQLite.db-journal",
+      "SQLite.db-wal",
+      "SQLite.db-shm",
+    ];
+
+    for (const ext of extensions) {
+      const filePath = path.join(dbBasePath, `${dbName}${ext}`);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(`[Main] Deleted: ${filePath}`);
+      }
+    }
+    return true;
+  } catch (e) {
+    console.error(`[Main] Failed to delete database ${dbName}`, e);
+    return false;
+  }
+});

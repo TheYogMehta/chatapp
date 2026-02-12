@@ -53,12 +53,17 @@ export class ChatClient extends EventEmitter implements IChatClient {
     );
     this.authService.on("auth_error", () => this.emit("auth_error"));
 
-    this.sessionService.on("session_updated", () =>
-      this.emit("session_updated"),
-    );
-    this.sessionService.on("session_created", (sid) =>
-      this.emit("session_created", sid),
-    );
+    this.sessionService.on("session_updated", () => {
+      console.log("[ChatClient] session_updated event received from Service");
+      this.emit("session_updated");
+    });
+    this.sessionService.on("session_created", (sid) => {
+      console.log(
+        "[ChatClient] session_created event received from Service:",
+        sid,
+      );
+      this.emit("session_created", sid);
+    });
 
     socket.on("message", (frame) => {
       this.handleFrame(frame);
@@ -112,6 +117,7 @@ export class ChatClient extends EventEmitter implements IChatClient {
   }
 
   async init() {
+    await this.sessionService.loadSessions();
     this.emit("session_updated");
   }
 

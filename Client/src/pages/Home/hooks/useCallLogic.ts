@@ -49,41 +49,38 @@ export const useCallLogic = ({
       return { peerName: "Unknown", peerAvatar: null };
     };
 
-    client.on("call_incoming", async (call) => {
+    const onCallIncoming = async (call: any) => {
       const info = await getSessionInfo(call.sid);
       setActiveCall({ ...call, ...info, status: "ringing" });
-    });
+    };
 
-    client.on("call_outgoing", async (call) => {
+    const onCallOutgoing = async (call: any) => {
       const info = await getSessionInfo(call.sid);
       setActiveCall({ ...call, ...info, status: "outgoing" });
-    });
+    };
 
-    client.on("call_started", ({ sid }) =>
+    const onCallStarted = ({ sid }: { sid: string }) =>
       setActiveCall((prev: any) =>
         prev && prev.sid === sid ? { ...prev, status: "connected" } : prev,
-      ),
-    );
-    client.on("ice_status", (status) =>
+      );
+
+    const onIceStatus = (status: any) =>
       setActiveCall((prev: any) =>
         prev ? { ...prev, iceStatus: status } : null,
-      ),
-    );
-    client.on("peer_mic_status", ({ sid, muted }) =>
+      );
+
+    const onPeerMicStatus = ({ sid, muted }: { sid: string; muted: boolean }) =>
       setActiveCall((prev: any) =>
         prev && prev.sid === sid ? { ...prev, peerMicMuted: muted } : prev,
-      ),
-    );
-    client.on("call_mode_changed", ({ sid, mode }) => {
+      );
+
+    const onCallModeChanged = ({ sid, mode }: { sid: string; mode: any }) => {
       setActiveCall((prev: any) =>
         prev && prev.sid === sid ? { ...prev, type: mode } : prev,
       );
-    });
+    };
 
-    client.on("local_stream_ready", onLocalStream);
-    client.on("remote_stream_ready", onRemoteStream);
-
-    client.on("call_ended", async (data: any) => {
+    const onCallEnded = async (data: any) => {
       setActiveCall(null);
       const sid = typeof data === "string" ? data : data.sid;
       const duration = typeof data === "object" ? data.duration : 0;
@@ -123,9 +120,27 @@ export const useCallLogic = ({
       } catch (e) {
         console.error("Failed to log call end:", e);
       }
-    });
+    };
+
+    client.on("call_incoming", onCallIncoming);
+    client.on("call_outgoing", onCallOutgoing);
+    client.on("call_started", onCallStarted);
+    client.on("ice_status", onIceStatus);
+    client.on("peer_mic_status", onPeerMicStatus);
+    client.on("call_mode_changed", onCallModeChanged);
+    client.on("call_ended", onCallEnded);
+
+    client.on("local_stream_ready", onLocalStream);
+    client.on("remote_stream_ready", onRemoteStream);
 
     return () => {
+      client.off("call_incoming", onCallIncoming);
+      client.off("call_outgoing", onCallOutgoing);
+      client.off("call_started", onCallStarted);
+      client.off("ice_status", onIceStatus);
+      client.off("peer_mic_status", onPeerMicStatus);
+      client.off("call_mode_changed", onCallModeChanged);
+      client.off("call_ended", onCallEnded);
       client.off("local_stream_ready", onLocalStream);
       client.off("remote_stream_ready", onRemoteStream);
     };

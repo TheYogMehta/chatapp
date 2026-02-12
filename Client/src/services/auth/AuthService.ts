@@ -34,9 +34,8 @@ export class AuthService extends EventEmitter {
     this.authToken = token;
     if (!socket.isConnected()) {
       await socket.connect("wss://socket.cryptnode.theyogmehta.online");
-    } else {
-      socket.send({ t: "AUTH", data: { token }, c: true, p: 0 });
     }
+    socket.send({ t: "AUTH", data: { token }, c: true, p: 0 });
   }
 
   public async logout() {
@@ -76,9 +75,8 @@ export class AuthService extends EventEmitter {
 
     if (!socket.isConnected()) {
       await socket.connect("wss://socket.cryptnode.theyogmehta.online");
-    } else {
-      socket.send({ t: "AUTH", data: { token: this.authToken } });
     }
+    socket.send({ t: "AUTH", data: { token: this.authToken } });
 
     this.emit("auth_success", email);
   }

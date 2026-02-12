@@ -104,6 +104,10 @@ export const useSessionLogic = () => {
     client.on("joined_success", () => {
       setIsWaiting(false);
       setIsJoining(false);
+      loadSessions();
+    });
+    client.on("session_created", () => {
+      loadSessions();
     });
     client.on("inbound_request", (req) => setInboundReq(req));
     client.on("auth_success", (email) => {
