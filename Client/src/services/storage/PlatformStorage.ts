@@ -21,11 +21,25 @@ export const PlatformStorage = {
         }
       }
 
-      await Filesystem.mkdir({
-        path: folderName,
-        directory: Directory.ExternalStorage,
-        recursive: true,
-      });
+      try {
+        await Filesystem.mkdir({
+          path: folderName,
+          directory: Directory.ExternalStorage,
+          recursive: true,
+        });
+      } catch (e: any) {
+        if (e.message && e.message.includes("already exists")) {
+        } else {
+          try {
+            await Filesystem.stat({
+              path: folderName,
+              directory: Directory.ExternalStorage,
+            });
+          } catch {
+            throw e;
+          }
+        }
+      }
 
       let finalName = originalName;
       let counter = 1;

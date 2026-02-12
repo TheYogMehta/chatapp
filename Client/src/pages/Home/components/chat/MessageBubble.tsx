@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
+import { useRecentEmojis } from "../../../../hooks/useRecentEmojis";
 import { ChatMessage } from "../../types";
 import ChatClient from "../../../../services/core/ChatClient";
 import { StorageService } from "../../../../services/storage/StorageService";
@@ -68,6 +69,7 @@ export const MessageBubble = ({
 
   const [reactions, setReactions] = useState<Reaction[]>([]);
   const [showPicker, setShowPicker] = useState(false);
+  const { recentEmojis, trackEmoji } = useRecentEmojis();
 
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{
@@ -160,7 +162,14 @@ export const MessageBubble = ({
         "SELECT * FROM reactions WHERE message_id = ?",
         [msg.id],
       );
-      setReactions(rows);
+      const mapped: Reaction[] = rows.map((r: any) => ({
+        id: r.id,
+        messageId: r.message_id,
+        senderEmail: r.sender_email,
+        emoji: r.emoji,
+        timestamp: r.timestamp,
+      }));
+      setReactions(mapped);
     } catch (e) {
       console.error("Failed to load reactions", e);
     }
@@ -333,6 +342,7 @@ export const MessageBubble = ({
           <img
             src={msg.text}
             alt="gif"
+            referrerPolicy="no-referrer"
             onClick={(e) => {
               e.stopPropagation();
               if (onMediaClick) {
@@ -664,35 +674,75 @@ export const MessageBubble = ({
           </>
         )}
 
-        {/* WhatsApp-style Reaction Floating Badge */}
+        {/* Detailed Reaction Chips */}
         {Object.keys(groupedReactions).length > 0 && (
-          <ReactionBubble
-            isMe={isMe}
-            onClick={(e) => {
-              e.stopPropagation();
-              // Optionally confirm removal or just show who reacted
+          <div
+            style={{
+              display: "flex",
+              gap: "4px",
+              flexWrap: "wrap",
+              marginTop: "8px",
+              marginBottom: "4px",
+              justifyContent: isMe ? "flex-end" : "flex-start",
             }}
           >
-            {Object.entries(groupedReactions)
-              .sort((a: any, b: any) => b[1] - a[1]) // Sort by count desc
-              .slice(0, 3) // Show top 3
-              .map(([emoji]) => (
-                <span key={emoji as string} style={{ lineHeight: 1 }}>
-                  {emoji as string}
-                </span>
+            {Object.entries(
+              reactions.reduce((acc: any, r) => {
+                if (!acc[r.emoji]) {
+                  acc[r.emoji] = { count: 0, hasMe: false };
+                }
+                acc[r.emoji].count++;
+                if (
+                  r.senderEmail === "me" ||
+                  r.senderEmail === ChatClient.userEmail
+                ) {
+                  acc[r.emoji].hasMe = true;
+                }
+                return acc;
+              }, {}),
+            )
+              .sort((a: any, b: any) => b[1].count - a[1].count)
+              .slice(0, 5)
+              .map(([emoji, stats]: [string, any]) => (
+                <div
+                  key={emoji}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    if (msg.sid && msg.id) {
+                      try {
+                        await ChatClient.sendReaction(
+                          msg.sid,
+                          msg.id,
+                          emoji,
+                          stats.hasMe ? "remove" : "add",
+                        );
+                      } catch (err) {
+                        console.error("Failed to send reaction", err);
+                      }
+                    }
+                  }}
+                  style={{
+                    backgroundColor: "rgba(0, 0, 0, 0.2)",
+                    border: stats.hasMe
+                      ? "1px solid #3b82f6"
+                      : "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: "12px",
+                    padding: "4px 8px",
+                    fontSize: "0.8rem",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    cursor: "pointer",
+                    color: "inherit",
+                  }}
+                >
+                  <span>{emoji}</span>
+                  <span style={{ fontWeight: 600, fontSize: "0.75rem" }}>
+                    {stats.count}
+                  </span>
+                </div>
               ))}
-            {(Object.values(groupedReactions) as number[]).reduce(
-              (a, b) => a + b,
-              0,
-            ) > 1 && (
-              <span style={{ marginLeft: 2 }}>
-                {(Object.values(groupedReactions) as number[]).reduce(
-                  (a, b) => a + b,
-                  0,
-                )}
-              </span>
-            )}
-          </ReactionBubble>
+          </div>
         )}
 
         <div
@@ -737,16 +787,17 @@ export const MessageBubble = ({
             }}
           />
           <ContextMenuContainer
-            x={Math.min(contextMenu.x, window.innerWidth - 360)} // Shift left to fit wider ReactionBar (~300px)
-            y={Math.max(70, Math.min(contextMenu.y, window.innerHeight - 300))} // Ensure at least 70px from top for ReactionBar
+            x={Math.min(contextMenu.x, window.innerWidth - 360)}
+            y={Math.max(70, Math.min(contextMenu.y, window.innerHeight - 300))}
           >
             <ReactionBar>
-              {["👍", "❤️", "😂", "😮", "😢", "🙏"].map((emoji) => (
+              {recentEmojis.map((emoji) => (
                 <ReactionButton
                   key={emoji}
                   onClick={(e) => {
                     e.stopPropagation();
                     handleReaction({ emoji });
+                    trackEmoji(emoji);
                     setContextMenu({ visible: false, x: 0, y: 0 });
                   }}
                 >

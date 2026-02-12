@@ -178,6 +178,7 @@ export class ChatClient extends EventEmitter implements IChatClient {
         this.sessionService.setPeerOnline(sid, true);
         this.emit("session_updated");
         this.syncPendingMessages();
+        this.broadcastProfileUpdate();
         break;
       case "PEER_OFFLINE":
         this.sessionService.setPeerOnline(sid, false);

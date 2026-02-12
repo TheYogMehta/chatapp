@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import styled from "styled-components";
-import { Search, ArrowLeft } from "lucide-react";
+import { Search, ArrowLeft, Loader2 } from "lucide-react";
 
 const PickerContainer = styled.div`
   width: 320px;
@@ -49,16 +49,65 @@ const Content = styled.div`
   gap: 8px;
 `;
 
-const GifItem = styled.img`
+const GifImage = styled.img`
   width: 100%;
   height: 100px;
   object-fit: cover;
   border-radius: 6px;
   cursor: pointer;
   transition: transform 0.2s;
+  background: #2a2a2a;
 
   &:hover {
     transform: scale(1.05);
+  }
+`;
+
+const CategoryItem = styled.div`
+  position: relative;
+  height: 100px;
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.2s;
+  background: #2a2a2a;
+
+  &:hover {
+    transform: scale(1.05);
+  }
+`;
+
+const CategoryVideo = styled.video`
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+`;
+
+const CategoryName = styled.div`
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: white;
+  font-weight: bold;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+  font-size: 1.1rem;
+  width: 100%;
+  text-align: center;
+  pointer-events: none;
+`;
+
+const BackBtn = styled.button`
+  background: none;
+  border: none;
+  color: #aaa;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+
+  &:hover {
+    color: white;
   }
 `;
 
@@ -67,14 +116,13 @@ const DISCORD_TRENDING =
 const DISCORD_SEARCH =
   "https://discord.com/api/v9/gifs/search?provider=tenor&locale=en-US&media_format=mp4&q=";
 
-interface GifPickerProps {
-  onSelect: (url: string) => void;
-  onClose: () => void;
-}
+const CACHE_KEY_PREFIX = "gif_cache_";
+const CACHE_EXPIRY = 24 * 60 * 60 * 1000;
 
 interface GifResult {
   url: string;
   preview: string;
+  dims?: number[];
 }
 
 interface GifCategory {
@@ -82,12 +130,119 @@ interface GifCategory {
   src: string;
 }
 
-interface TrendingData {
-  categories: GifCategory[];
+interface CacheData<T> {
+  timestamp: number;
+  data: T;
 }
 
-let trendingCache: TrendingData | null = null;
-const searchCache = new Map<string, GifResult[]>();
+const getFromCache = <T,>(key: string): T | null => {
+  try {
+    const item = localStorage.getItem(CACHE_KEY_PREFIX + key);
+    if (!item) return null;
+    const parsed: CacheData<T> = JSON.parse(item);
+    if (Date.now() - parsed.timestamp > CACHE_EXPIRY) {
+      localStorage.removeItem(CACHE_KEY_PREFIX + key);
+      return null;
+    }
+    return parsed.data;
+  } catch (e) {
+    return null;
+  }
+};
+
+const saveToCache = <T,>(key: string, data: T) => {
+  try {
+    const cacheItem: CacheData<T> = {
+      timestamp: Date.now(),
+      data,
+    };
+    localStorage.setItem(CACHE_KEY_PREFIX + key, JSON.stringify(cacheItem));
+  } catch (e) {
+    console.warn("Failed to save to cache", e);
+  }
+};
+
+interface GifPickerProps {
+  onSelect: (url: string) => void;
+  onClose: () => void;
+}
+
+const LazyGifItem: React.FC<{
+  src: string;
+  url: string;
+  onSelect: (url: string) => void;
+}> = ({ src, url, onSelect }) => {
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [isVisible, setIsVisible] = useState(false);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            setIsVisible(true);
+            observer.disconnect();
+          }
+        });
+      },
+      { rootMargin: "50px" },
+    );
+
+    if (imgRef.current) {
+      observer.observe(imgRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <GifImage
+      ref={imgRef}
+      src={isVisible ? src : ""}
+      alt="gif"
+      onClick={() => onSelect(url)}
+      style={{ opacity: isVisible ? 1 : 0.5, transition: "opacity 0.3s" }}
+      referrerPolicy="no-referrer"
+    />
+  );
+};
+
+const LazyCategoryItem: React.FC<{
+  category: GifCategory;
+  onClick: (name: string) => void;
+}> = ({ category, onClick }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isVisible, setIsVisible] = useState(false);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            setIsVisible(true);
+            observer.disconnect();
+          }
+        });
+      },
+      { rootMargin: "50px" },
+    );
+
+    if (containerRef.current) {
+      observer.observe(containerRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <CategoryItem ref={containerRef} onClick={() => onClick(category.name)}>
+      {isVisible && (
+        <CategoryVideo src={category.src} autoPlay loop muted playsInline />
+      )}
+      <CategoryName>{category.name}</CategoryName>
+    </CategoryItem>
+  );
+};
 
 export const GifPicker: React.FC<GifPickerProps> = ({ onSelect, onClose }) => {
   const [search, setSearch] = useState("");
@@ -95,9 +250,14 @@ export const GifPicker: React.FC<GifPickerProps> = ({ onSelect, onClose }) => {
   const [categories, setCategories] = useState<GifCategory[]>([]);
   const [loading, setLoading] = useState(false);
   const [view, setView] = useState<"categories" | "gifs">("categories");
-  const containerRef = React.useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  React.useEffect(() => {
+  const [displayedGifs, setDisplayedGifs] = useState<GifResult[]>([]);
+  const [page, setPage] = useState(1);
+  const ITEMS_PER_PAGE = 20;
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (
         containerRef.current &&
@@ -108,25 +268,24 @@ export const GifPicker: React.FC<GifPickerProps> = ({ onSelect, onClose }) => {
     };
 
     const handleEsc = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
+      if (event.key === "Escape") onClose();
     };
 
     document.addEventListener("mousedown", handleClickOutside);
     document.addEventListener("keydown", handleEsc);
-
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
       document.removeEventListener("keydown", handleEsc);
     };
   }, [onClose]);
 
-  React.useEffect(() => {
-    const fetchGifs = async () => {
+  useEffect(() => {
+    const fetchContent = async () => {
+      // 1. Trending Categories
       if (search.trim().length === 0) {
-        if (trendingCache) {
-          setCategories(trendingCache.categories);
+        const cached = getFromCache<GifCategory[]>("trending_cats");
+        if (cached) {
+          setCategories(cached);
           setView("categories");
           return;
         }
@@ -142,8 +301,8 @@ export const GifPicker: React.FC<GifPickerProps> = ({ onSelect, onClose }) => {
               name: c.name,
               src: c.src,
             }));
-            const result: TrendingData = { categories: parsedCategories };
-            trendingCache = result;
+
+            saveToCache("trending_cats", parsedCategories);
             setCategories(parsedCategories);
             setView("categories");
           }
@@ -155,9 +314,13 @@ export const GifPicker: React.FC<GifPickerProps> = ({ onSelect, onClose }) => {
         return;
       }
 
-      if (searchCache.has(search)) {
-        setGifs(searchCache.get(search)!);
+      // 2. Search
+      const cachedSearch = getFromCache<GifResult[]>(`search_${search}`);
+      if (cachedSearch) {
+        setGifs(cachedSearch);
         setView("gifs");
+        setPage(1);
+        setDisplayedGifs(cachedSearch.slice(0, ITEMS_PER_PAGE));
         return;
       }
 
@@ -168,21 +331,19 @@ export const GifPicker: React.FC<GifPickerProps> = ({ onSelect, onClose }) => {
         const data = await res.json();
 
         let results: GifResult[] = [];
-        if (Array.isArray(data)) {
-          results = data.map((g: any) => ({
-            url: g.gif_src || g.src || g.url,
-            preview: g.gif_src || g.src || g.url,
-          }));
-        } else if (data?.gifs) {
-          results = data.gifs.map((g: any) => ({
-            url: g.gif_src || g.src || g.url,
-            preview: g.gif_src || g.src || g.url,
-          }));
-        }
+        const rawItems = Array.isArray(data) ? data : data?.gifs || [];
 
-        searchCache.set(search, results);
+        results = rawItems.map((g: any) => ({
+          url: g.url || g.src || g.gif_src,
+          preview: g.gif_src || g.src || g.url,
+          dims: g.dim,
+        }));
+
+        saveToCache(`search_${search}`, results);
         setGifs(results);
         setView("gifs");
+        setPage(1);
+        setDisplayedGifs(results.slice(0, ITEMS_PER_PAGE));
       } catch (e) {
         console.error("Failed to search GIFs", e);
       } finally {
@@ -190,93 +351,46 @@ export const GifPicker: React.FC<GifPickerProps> = ({ onSelect, onClose }) => {
       }
     };
 
-    const timer = setTimeout(fetchGifs, 500);
+    const timer = setTimeout(fetchContent, 500);
     return () => clearTimeout(timer);
   }, [search]);
+
+  useEffect(() => {
+    if (view !== "gifs" || loading) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          if (displayedGifs.length < gifs.length) {
+            setPage((prev) => prev + 1);
+          }
+        }
+      },
+      { threshold: 0.5 },
+    );
+
+    if (loadMoreRef.current) {
+      observer.observe(loadMoreRef.current);
+    }
+    return () => observer.disconnect();
+  }, [displayedGifs.length, gifs.length, view, loading]);
+
+  useEffect(() => {
+    if (view === "gifs" && gifs.length > 0) {
+      const nextItems = gifs.slice(0, page * ITEMS_PER_PAGE);
+      setDisplayedGifs(nextItems);
+    }
+  }, [page, gifs, view]);
 
   const handleCategoryClick = async (category: string) => {
     setLoading(true);
     setView("gifs");
-
-    if (searchCache.has(category)) {
-      setGifs(searchCache.get(category)!);
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const res = await fetch(DISCORD_SEARCH + encodeURIComponent(category));
-      if (!res.ok) throw new Error("Failed to fetch category");
-      const data = await res.json();
-
-      let results: GifResult[] = [];
-      if (Array.isArray(data)) {
-        results = data.map((g: any) => ({
-          url: g.gif_src || g.src || g.url,
-          preview: g.gif_src || g.src || g.url,
-        }));
-      } else if (data?.gifs) {
-        results = data.gifs.map((g: any) => ({
-          url: g.gif_src || g.src || g.url,
-          preview: g.gif_src || g.src || g.url,
-        }));
-      }
-
-      searchCache.set(category, results);
-      setGifs(results);
-    } catch (e) {
-      console.error("Failed to fetch category gifs", e);
-    } finally {
-      setLoading(false);
-    }
+    setSearch(category);
   };
 
-  const CategoryItem = styled.div`
-    position: relative;
-    height: 100px;
-    border-radius: 6px;
-    overflow: hidden;
-    cursor: pointer;
-    transition: transform 0.2s;
-
-    &:hover {
-      transform: scale(1.05);
-    }
-  `;
-
-  const CategoryVideo = styled.video`
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  `;
-
-  const CategoryName = styled.div`
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    color: white;
-    font-weight: bold;
-    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
-    font-size: 1.1rem;
-    width: 100%;
-    text-align: center;
-    pointer-events: none;
-  `;
-
-  const BackBtn = styled.button`
-    background: none;
-    border: none;
-    color: #aaa;
-    cursor: pointer;
-    padding: 4px;
-    display: flex;
-    align-items: center;
-
-    &:hover {
-      color: white;
-    }
-  `;
+  const handleManualSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearch(e.target.value);
+  };
 
   return (
     <PickerContainer ref={containerRef} onClick={(e) => e.stopPropagation()}>
@@ -290,7 +404,7 @@ export const GifPicker: React.FC<GifPickerProps> = ({ onSelect, onClose }) => {
         <Input
           placeholder="Search GIFs..."
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={handleManualSearchChange}
           autoFocus
         />
       </SearchBar>
@@ -298,26 +412,27 @@ export const GifPicker: React.FC<GifPickerProps> = ({ onSelect, onClose }) => {
         {loading && (
           <div
             style={{
-              color: "#aaa",
               gridColumn: "span 2",
-              textAlign: "center",
+              display: "flex",
+              justifyContent: "center",
               padding: "20px",
             }}
           >
-            Loading...
+            <Loader2 className="animate-spin" color="#aaa" />
           </div>
         )}
 
         {!loading &&
           view === "categories" &&
           categories.map((cat, i) => (
-            <CategoryItem key={i} onClick={() => handleCategoryClick(cat.name)}>
-              <CategoryVideo src={cat.src} autoPlay loop muted playsInline />
-              <CategoryName>{cat.name}</CategoryName>
-            </CategoryItem>
+            <LazyCategoryItem
+              key={cat.name + i}
+              category={cat}
+              onClick={handleCategoryClick}
+            />
           ))}
 
-        {!loading && view === "gifs" && gifs.length === 0 && (
+        {!loading && view === "gifs" && displayedGifs.length === 0 && (
           <div
             style={{
               color: "#aaa",
@@ -332,16 +447,25 @@ export const GifPicker: React.FC<GifPickerProps> = ({ onSelect, onClose }) => {
 
         {!loading &&
           view === "gifs" &&
-          gifs.map((gif, i) => (
-            <GifItem
-              key={i}
+          displayedGifs.map((gif, i) => (
+            <LazyGifItem
+              key={gif.url + i}
               src={gif.preview}
-              onClick={() => {
-                onSelect(gif.url);
+              url={gif.url}
+              onSelect={(url) => {
+                onSelect(url);
                 onClose();
               }}
             />
           ))}
+
+        {/* Sentinel for infinite scroll */}
+        {view === "gifs" && displayedGifs.length < gifs.length && (
+          <div
+            ref={loadMoreRef}
+            style={{ height: "20px", gridColumn: "span 2" }}
+          />
+        )}
       </Content>
     </PickerContainer>
   );

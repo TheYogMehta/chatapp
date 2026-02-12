@@ -57,6 +57,7 @@ export const ImageBubble: React.FC<ImageBubbleProps> = ({
             console.error(`[ImageBubble] Image load failed.`);
             e.currentTarget.style.display = "none";
           }}
+          referrerPolicy="no-referrer"
           style={{
             cursor: "pointer",
             opacity: mediaStatus === "uploading" ? 0.7 : 1,
