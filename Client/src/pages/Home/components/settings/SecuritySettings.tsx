@@ -38,12 +38,14 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({
 
   return (
     <div>
-      <h3 style={{ marginTop: 0, color: "white" }}>Security</h3>
+      <h3 style={{ marginTop: 0, color: colors.text.primary }}>Security</h3>
 
       <SecuritySection>
         <SecurityRow>
           <div>
-            <div style={{ color: "white", fontWeight: 500 }}>App Lock</div>
+            <div style={{ color: colors.text.primary, fontWeight: 500 }}>
+              App Lock
+            </div>
             <div style={{ color: colors.text.secondary, fontSize: "13px" }}>
               Secured with PIN
             </div>
@@ -54,7 +56,7 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({
               padding: "8px 16px",
               borderRadius: "6px",
               background: colors.background.tertiary,
-              color: "white",
+              color: colors.text.primary,
               border: "none",
               cursor: "pointer",
             }}
@@ -65,7 +67,9 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({
       </SecuritySection>
 
       <SecuritySection>
-        <div style={{ color: "white", marginBottom: "10px" }}>Backup Code</div>
+        <div style={{ color: colors.text.primary, marginBottom: "10px" }}>
+          Backup Code
+        </div>
         {backupCode ? (
           <BackupContainer>
             <CodeBlock>
@@ -73,7 +77,7 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({
                 <span
                   key={i}
                   style={{
-                    color: "#e5e7eb",
+                    color: colors.text.primary,
                     backgroundColor: colors.background.tertiary,
                     padding: "4px 8px",
                     borderRadius: "4px",
@@ -100,7 +104,7 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({
                 padding: "10px",
                 borderRadius: "6px",
                 backgroundColor: colors.primary.main,
-                color: "white",
+                color: colors.text.inverse,
                 border: "none",
                 cursor: "pointer",
                 fontWeight: 600,
@@ -126,7 +130,7 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({
               padding: "8px 16px",
               borderRadius: "6px",
               background: colors.background.tertiary,
-              color: "white",
+              color: colors.text.primary,
               border: "none",
               cursor: "pointer",
             }}

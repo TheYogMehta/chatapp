@@ -15,7 +15,6 @@ export interface ChatMessage {
   type:
   | "text"
   | "image"
-  | "gif"
   | "audio"
   | "file"
   | "video"

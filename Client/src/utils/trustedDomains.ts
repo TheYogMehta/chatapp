@@ -14,6 +14,8 @@ export const DEFAULT_TRUSTED_DOMAINS = [
   "pbs.twimg.com",
   "tenor.com",
   "media.tenor.com",
+  "klipy.com",
+  "static.klipy.com",
 ];
 
 const STORAGE_KEY = "trusted_domains";

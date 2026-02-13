@@ -26,7 +26,7 @@ import {
   MenuButton,
   ErrorToast,
 } from "./Home.styles";
-import { Menu, Lock } from "lucide-react";
+import { Menu } from "lucide-react";
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -344,9 +344,6 @@ const Home = () => {
                   Chatapp
                 </HeaderTitle>
               </div>
-              <MenuButton onClick={() => history.push("/secure-chat")}>
-                <Lock size={20} />
-              </MenuButton>
             </MobileHeader>
           )}
           {state.view === "chat" && state.activeChat === "secure-vault" ? (

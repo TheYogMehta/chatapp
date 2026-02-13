@@ -1,27 +1,30 @@
-import React, { useEffect, useRef, useState, useLayoutEffect } from "react";
+import React, { useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
 import { StorageService } from "../../../../services/storage/StorageService";
+import ChatClient from "../../../../services/core/ChatClient";
 import { MessageBubble } from "./MessageBubble";
 import { PortShareModal } from "./PortShareModal";
 import { MediaModal } from "./MediaModal";
+import { GifPicker } from "../../../../components/GifPicker";
 import EmojiPicker, { EmojiClickData, Theme } from "emoji-picker-react";
 import {
   Send,
   Mic,
+  Monitor,
   Plus,
   Image as ImageIcon,
   Camera,
   FileText,
   MapPin,
-  Headphones,
   Globe,
   Phone,
   ArrowLeft,
   X,
   Video,
-  Gift,
   Smile,
+  Search,
+  Edit2,
+  Trash2,
 } from "lucide-react";
-import { GifPicker } from "../../../../components/GifPicker";
 import { ChatMessage, SessionData } from "../../types";
 import { Avatar } from "../../../../components/ui/Avatar";
 import { useTheme } from "../../../../theme/ThemeContext";
@@ -56,13 +59,22 @@ interface ChatWindowProps {
   activeChat: string | null;
   session?: SessionData;
   onFileSelect: (file: File) => void;
-  onStartCall: (mode: "Audio" | "Video") => void;
+  onStartCall: (mode: "Audio" | "Video" | "Screen") => void;
   peerOnline?: boolean;
   onBack?: () => void;
   replyingTo?: ChatMessage | null;
   setReplyingTo?: (msg: ChatMessage | null) => void;
   onLoadMore?: () => void;
   isRateLimited?: boolean;
+}
+
+interface PendingAttachment {
+  id: string;
+  file: File;
+  name: string;
+  description: string;
+  previewUrl: string | null;
+  mediaType: "image" | "video" | "file";
 }
 
 export const ChatWindowDefault = ({
@@ -80,6 +92,7 @@ export const ChatWindowDefault = ({
   isRateLimited,
 }: ChatWindowProps) => {
   const { messageLayout } = useTheme();
+  const canScreenShare = ChatClient.canScreenShare;
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -90,8 +103,13 @@ export const ChatWindowDefault = ({
   const [port, setPort] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [mediaModalOpen, setMediaModalOpen] = useState(false);
-  const [showGifPicker, setShowGifPicker] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showGifPicker, setShowGifPicker] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState<
+    PendingAttachment[]
+  >([]);
   const [selectedMedia, setSelectedMedia] = useState<{
     url: string;
     type: "image" | "video";
@@ -101,6 +119,7 @@ export const ChatWindowDefault = ({
   const prevHeightRef = useRef(0);
   const prevFirstMsgIdRef = useRef<string | null>(null);
   const prevActiveChatRef = useRef<string | null>(null);
+  const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
 
   const headerName =
     session?.alias_name ||
@@ -182,16 +201,47 @@ export const ChatWindowDefault = ({
     }
   }, [input]);
 
+  useEffect(() => {
+    pendingAttachmentsRef.current = pendingAttachments;
+  }, [pendingAttachments]);
+
+  useEffect(() => {
+    return () => {
+      for (const item of pendingAttachmentsRef.current) {
+        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      }
+    };
+  }, []);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const createPendingAttachment = (file: File): PendingAttachment => {
+    const isImage = file.type.startsWith("image/");
+    const isVideo = file.type.startsWith("video/");
+    return {
+      id: crypto.randomUUID(),
+      file,
+      name: file.name,
+      description: "",
+      previewUrl: isImage || isVideo ? URL.createObjectURL(file) : null,
+      mediaType: isImage ? "image" : isVideo ? "video" : "file",
+    };
+  };
+
+  const addFilesToPending = (files: File[]) => {
+    if (!files.length) return;
+    setPendingAttachments((prev) => [
+      ...prev,
+      ...files.map(createPendingAttachment),
+    ]);
+    setShowMenu(false);
+  };
+
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0] && activeChat) {
-      const file = e.target.files[0];
-      if (onFileSelect) {
-        onFileSelect(file);
-      }
-      setShowMenu(false);
+    if (e.target.files && e.target.files.length > 0 && activeChat) {
+      addFilesToPending(Array.from(e.target.files));
     }
+    e.target.value = "";
   };
 
   const attachments = [
@@ -213,10 +263,13 @@ export const ChatWindowDefault = ({
       onClick: () => fileInputRef.current?.click(),
     },
     {
-      label: "Audio",
-      icon: <Headphones size={24} />,
+      label: isRecording ? "Stop Voice" : "Voice Message",
+      icon: <Mic size={24} />,
       color: "#2cb67d",
-      onClick: () => fileInputRef.current?.click(),
+      onClick: () => {
+        handleRecord();
+        setShowMenu(false);
+      },
     },
     {
       label: "Live Share",
@@ -304,20 +357,92 @@ export const ChatWindowDefault = ({
   const handlePaste = (e: React.ClipboardEvent) => {
     if (e.clipboardData && e.clipboardData.items) {
       const items = e.clipboardData.items;
+      const files: File[] = [];
       for (let i = 0; i < items.length; i++) {
         if (items[i].kind === "file") {
           const file = items[i].getAsFile();
           if (file) {
-            e.preventDefault();
-            if (onFileSelect) {
-              onFileSelect(file);
-            }
-            return;
+            files.push(file);
           }
         }
       }
+      if (files.length > 0) {
+        e.preventDefault();
+        addFilesToPending(files);
+      }
     }
   };
+
+  const handleRenamePendingAttachment = (id: string) => {
+    const item = pendingAttachments.find((a) => a.id === id);
+    if (!item) return;
+    const renamed = window.prompt("Rename file", item.name);
+    if (!renamed) return;
+    const safeName = renamed.trim();
+    if (!safeName) return;
+    setPendingAttachments((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, name: safeName } : a)),
+    );
+  };
+
+  const handleRemovePendingAttachment = (id: string) => {
+    setPendingAttachments((prev) => {
+      const target = prev.find((a) => a.id === id);
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((a) => a.id !== id);
+    });
+  };
+
+  const handlePendingAttachmentDescription = (id: string, description: string) => {
+    setPendingAttachments((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, description } : a)),
+    );
+  };
+
+  const handleSendMessage = async () => {
+    if (!input.trim() && pendingAttachments.length === 0) return;
+
+    if (input.trim()) {
+      onSend(input);
+    }
+
+    for (const item of pendingAttachments) {
+      if (item.description.trim()) {
+        onSend(item.description.trim());
+      }
+
+      let fileToSend = item.file;
+      if (item.name !== item.file.name) {
+        fileToSend = new File([item.file], item.name, {
+          type: item.file.type,
+          lastModified: item.file.lastModified,
+        });
+      }
+      await Promise.resolve(onFileSelect(fileToSend));
+      if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    }
+
+    setPendingAttachments([]);
+    setInput("");
+    setShowEmojiPicker(false);
+    setShowGifPicker(false);
+  };
+
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const filteredMessages = useMemo(() => {
+    if (!normalizedSearch) return messages;
+
+    return messages.filter((msg) => {
+      const fields = [
+        msg.text || "",
+        msg.media?.name || "",
+        msg.mediaFilename || "",
+        msg.replyTo?.text || "",
+        msg.type || "",
+      ];
+      return fields.some((v) => v.toLowerCase().includes(normalizedSearch));
+    });
+  }, [messages, normalizedSearch]);
 
   return (
     <ChatContainer>
@@ -344,6 +469,20 @@ export const ChatWindowDefault = ({
 
         <HeaderActions>
           <IconButton
+            variant={showSearch ? "primary" : "ghost"}
+            size="md"
+            onClick={() => {
+              setShowSearch((prev) => {
+                const next = !prev;
+                if (!next) setSearchQuery("");
+                return next;
+              });
+            }}
+            title="Search"
+          >
+            <Search size={20} />
+          </IconButton>
+          <IconButton
             variant="success"
             size="md"
             onClick={() => onStartCall("Audio")}
@@ -359,37 +498,86 @@ export const ChatWindowDefault = ({
           >
             <Video size={20} />
           </IconButton>
+          {canScreenShare && (
+            <IconButton
+              variant="ghost"
+              size="md"
+              onClick={() => onStartCall("Screen")}
+              title="Screen Share"
+            >
+              <Monitor size={20} />
+            </IconButton>
+          )}
         </HeaderActions>
       </ChatHeader>
+      {showSearch && (
+        <div
+          style={{
+            padding: "8px 12px",
+            borderBottom: "1px solid rgba(255,255,255,0.08)",
+            background: "rgba(0,0,0,0.2)",
+          }}
+        >
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search messages, files, links..."
+            style={{
+              width: "100%",
+              height: "38px",
+              borderRadius: "10px",
+              border: "1px solid rgba(255,255,255,0.12)",
+              background: "rgba(255,255,255,0.05)",
+              color: "#e5e7eb",
+              padding: "0 12px",
+              outline: "none",
+            }}
+          />
+        </div>
+      )}
 
       <input
         type="file"
         ref={fileInputRef}
+        multiple
         style={{ display: "none" }}
         onChange={handleFileSelect}
       />
 
       <MessageList ref={scrollRef} onScroll={handleScroll}>
-        {messages.map((msg, i) => (
-          <MessageBubble
-            key={i}
-            msg={msg}
-            onReply={setReplyingTo}
-            onMediaClick={handleMediaClick}
-            messageLayout={messageLayout}
-            senderName={
-              msg.sender === "me"
-                ? "You"
-                : session?.alias_name ||
-                  session?.peer_name ||
-                  (session?.peerEmail
-                    ? session.peerEmail.split("@")[0]
-                    : undefined) ||
-                  "User"
-            }
-            senderAvatar={msg.sender === "me" ? undefined : resolvedAvatar}
-          />
-        ))}
+        {filteredMessages.length > 0 ? (
+          filteredMessages.map((msg, i) => (
+            <MessageBubble
+              key={i}
+              msg={msg}
+              onReply={setReplyingTo}
+              onMediaClick={handleMediaClick}
+              messageLayout={messageLayout}
+              senderName={
+                msg.sender === "me"
+                  ? "You"
+                  : session?.alias_name ||
+                    session?.peer_name ||
+                    (session?.peerEmail
+                      ? session.peerEmail.split("@")[0]
+                      : undefined) ||
+                    "User"
+              }
+              senderAvatar={msg.sender === "me" ? undefined : resolvedAvatar}
+            />
+          ))
+        ) : (
+          <div
+            style={{
+              textAlign: "center",
+              color: "rgba(255,255,255,0.6)",
+              padding: "24px 12px",
+              fontSize: "0.9rem",
+            }}
+          >
+            No messages match your search.
+          </div>
+        )}
       </MessageList>
 
       {replyingTo && (
@@ -450,6 +638,141 @@ export const ChatWindowDefault = ({
         </AttachmentMenu>
       )}
 
+      {pendingAttachments.length > 0 && (
+        <div
+          style={{
+            borderTop: "1px solid rgba(255,255,255,0.06)",
+            padding: "10px 12px 6px",
+            display: "flex",
+            gap: "10px",
+            overflowX: "auto",
+            background: "rgba(255,255,255,0.02)",
+          }}
+        >
+          {pendingAttachments.map((item) => (
+            <div
+              key={item.id}
+              style={{
+                minWidth: "220px",
+                maxWidth: "220px",
+                borderRadius: "10px",
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: "rgba(255,255,255,0.03)",
+                padding: "8px",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  gap: "6px",
+                  marginBottom: "8px",
+                }}
+              >
+                <button
+                  onClick={() => handleRenamePendingAttachment(item.id)}
+                  style={{
+                    background: "rgba(255,255,255,0.08)",
+                    color: "#d1d5db",
+                    border: "none",
+                    borderRadius: "6px",
+                    width: "26px",
+                    height: "26px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                  }}
+                  title="Rename"
+                >
+                  <Edit2 size={14} />
+                </button>
+                <button
+                  onClick={() => handleRemovePendingAttachment(item.id)}
+                  style={{
+                    background: "rgba(239,68,68,0.18)",
+                    color: "#fca5a5",
+                    border: "none",
+                    borderRadius: "6px",
+                    width: "26px",
+                    height: "26px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                  }}
+                  title="Remove"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+
+              <div
+                style={{
+                  height: "130px",
+                  borderRadius: "8px",
+                  overflow: "hidden",
+                  background: "rgba(0,0,0,0.35)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  marginBottom: "8px",
+                }}
+              >
+                {item.mediaType === "image" && item.previewUrl ? (
+                  <img
+                    src={item.previewUrl}
+                    alt={item.name}
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  />
+                ) : item.mediaType === "video" && item.previewUrl ? (
+                  <video
+                    src={item.previewUrl}
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    muted
+                  />
+                ) : (
+                  <FileText size={28} color="#94a3b8" />
+                )}
+              </div>
+
+              <div
+                style={{
+                  color: "#e5e7eb",
+                  fontSize: "12px",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  marginBottom: "6px",
+                }}
+                title={item.name}
+              >
+                {item.name}
+              </div>
+
+              <input
+                value={item.description}
+                onChange={(e) =>
+                  handlePendingAttachmentDescription(item.id, e.target.value)
+                }
+                placeholder="Add description..."
+                style={{
+                  width: "100%",
+                  height: "30px",
+                  borderRadius: "8px",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  background: "rgba(255,255,255,0.04)",
+                  color: "#e5e7eb",
+                  padding: "0 8px",
+                  fontSize: "12px",
+                  outline: "none",
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
       <InputContainer>
         <AttachmentButton
           active={showMenu}
@@ -467,16 +790,29 @@ export const ChatWindowDefault = ({
             onPaste={handlePaste}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && input.trim()) {
+              if (
+                e.key === "Enter" &&
+                !e.shiftKey &&
+                (input.trim() || pendingAttachments.length > 0)
+              ) {
                 e.preventDefault();
-                onSend(input);
-                setInput("");
-                setShowEmojiPicker(false);
-                setShowGifPicker(false);
+                handleSendMessage();
               }
             }}
             placeholder={isRecording ? "" : "Message..."}
           />
+          <IconButton
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setShowGifPicker(!showGifPicker);
+              setShowEmojiPicker(false);
+            }}
+            title="GIF"
+            style={{ color: "#f59e0b", fontSize: "11px", fontWeight: 700 }}
+          >
+            GIF
+          </IconButton>
           <IconButton
             variant="ghost"
             size="sm"
@@ -489,28 +825,11 @@ export const ChatWindowDefault = ({
           >
             <Smile size={24} />
           </IconButton>
-          <IconButton
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setShowGifPicker(!showGifPicker);
-              setShowEmojiPicker(false);
-            }}
-            title="GIFs"
-            style={{ color: "#a78bfa" }}
-          >
-            <Gift size={24} />
-          </IconButton>
         </InputWrapper>
 
-        {input.trim().length > 0 ? (
+        {input.trim().length > 0 || pendingAttachments.length > 0 ? (
           <SendButton
-            onClick={() => {
-              onSend(input);
-              setInput("");
-              setShowEmojiPicker(false);
-              setShowGifPicker(false);
-            }}
+            onClick={handleSendMessage}
           >
             <Send size={20} />
           </SendButton>
@@ -524,18 +843,50 @@ export const ChatWindowDefault = ({
       {showEmojiPicker && (
         <div
           style={{
-            position: "absolute",
-            bottom: "80px",
-            right: "20px",
+            position: "fixed",
+            inset: 0,
             zIndex: 1000,
+            background: "transparent",
           }}
+          onClick={() => setShowEmojiPicker(false)}
         >
-          <EmojiPicker
-            onEmojiClick={onEmojiClick}
-            theme={Theme.DARK}
-            width={320}
-            height={400}
-          />
+          <div
+            style={{
+              position: "absolute",
+              bottom: "80px",
+              right: "20px",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <EmojiPicker
+              onEmojiClick={onEmojiClick}
+              theme={Theme.DARK}
+              width={320}
+              height={400}
+            />
+          </div>
+        </div>
+      )}
+
+      {showGifPicker && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1100,
+            background: "transparent",
+          }}
+          onClick={() => setShowGifPicker(false)}
+        >
+          <div onClick={(e) => e.stopPropagation()}>
+            <GifPicker
+              onSelect={(url) => {
+                onSend(url);
+                setShowGifPicker(false);
+              }}
+              onClose={() => setShowGifPicker(false)}
+            />
+          </div>
         </div>
       )}
 
@@ -555,16 +906,6 @@ export const ChatWindowDefault = ({
         onClose={() => setMediaModalOpen(false)}
         media={selectedMedia}
       />
-
-      {showGifPicker && (
-        <GifPicker
-          onSelect={(url) => {
-            onSend(url);
-            setShowGifPicker(false);
-          }}
-          onClose={() => setShowGifPicker(false)}
-        />
-      )}
     </ChatContainer>
   );
 };

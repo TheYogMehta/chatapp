@@ -49,6 +49,14 @@ export class CallService {
     return !!(window as any).electron?.getDesktopSources;
   }
 
+  public canUseScreenShare(): boolean {
+    const nav = navigator.mediaDevices as any;
+    return (
+      this.isElectronPlatform() ||
+      typeof nav?.getDisplayMedia === "function"
+    );
+  }
+
   private async getDisplayStream(): Promise<MediaStream> {
     const nav = navigator.mediaDevices as any;
     const getDisplayMedia =

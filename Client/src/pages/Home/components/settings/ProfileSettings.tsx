@@ -127,7 +127,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
 
   return (
     <div>
-      <h3 style={{ marginTop: 0, color: "white" }}>Profile</h3>
+      <h3 style={{ marginTop: 0, color: colors.text.primary }}>Profile</h3>
 
       {isEditingProfile ? (
         <EditProfileContainer>
@@ -151,7 +151,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                   left: 0,
                   right: 0,
                   background: "rgba(0,0,0,0.6)",
-                  color: "white",
+                  color: colors.text.inverse,
                   fontSize: "10px",
                   textAlign: "center",
                   padding: "2px",
@@ -189,7 +189,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                   borderRadius: "6px",
                   background: colors.background.tertiary,
                   border: `1px solid ${colors.border.subtle}`,
-                  color: "white",
+                  color: colors.text.primary,
                   fontSize: "16px",
                   outline: "none",
                 }}
@@ -204,7 +204,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                 padding: "8px 16px",
                 borderRadius: "6px",
                 background: colors.primary.main,
-                color: "white",
+                color: colors.text.inverse,
                 border: "none",
                 cursor: "pointer",
                 fontWeight: 600,
@@ -244,7 +244,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
               <div>
                 <div
                   style={{
-                    color: "white",
+                    color: colors.text.primary,
                     fontSize: "18px",
                     fontWeight: 600,
                   }}
@@ -268,7 +268,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                 padding: "8px 16px",
                 borderRadius: "6px",
                 background: colors.background.tertiary,
-                color: "white",
+                color: colors.text.primary,
                 border: `1px solid ${colors.border.subtle}`,
                 cursor: "pointer",
               }}

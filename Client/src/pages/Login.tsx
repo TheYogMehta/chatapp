@@ -1,5 +1,6 @@
 import React, { useEffect } from "react";
 import { SocialLogin } from "@capgo/capacitor-social-login";
+import { Capacitor } from "@capacitor/core";
 import ChatClient from "../services/core/ChatClient";
 import {
   LoginContainer,
@@ -19,6 +20,8 @@ interface LoginProps {
   onLogin: (token: string) => void;
 }
 
+let socialLoginInitialized = false;
+
 export const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const hasElectronGoogleLogin =
     typeof window !== "undefined" &&
@@ -26,11 +29,13 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
   useEffect(() => {
     const initSocialLogin = async () => {
+      if (socialLoginInitialized) return;
       if (hasElectronGoogleLogin) {
         try {
           localStorage.removeItem("OAUTH_STATE_KEY");
           localStorage.removeItem("oauth_state");
         } catch (_e) {}
+        socialLoginInitialized = true;
         return;
       }
       await SocialLogin.initialize({
@@ -40,12 +45,24 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
           mode: "online",
         },
       });
+      socialLoginInitialized = true;
     };
     initSocialLogin().catch(console.error);
   }, [hasElectronGoogleLogin]);
 
   const [isLoading, setIsLoading] = React.useState(false);
   const [errorText, setErrorText] = React.useState<string | null>(null);
+  const isAndroid = Capacitor.getPlatform() === "android";
+
+  const extractMessage = (error: unknown): string => {
+    if (error instanceof Error) return error.message || "Unknown error";
+    if (typeof error === "string") return error;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return "Unknown error";
+    }
+  };
 
   useEffect(() => {
     const onAuthDone = () => setIsLoading(false);
@@ -72,12 +89,27 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
           setIsLoading(false);
         }
       } else {
-        const response = await SocialLogin.login({
-          provider: "google",
-          options: {
-            forceRefreshToken: true,
-          },
-        });
+        let response;
+        try {
+          response = await SocialLogin.login({
+            provider: "google",
+            options: {
+              forceRefreshToken: !isAndroid,
+            },
+          });
+        } catch (error) {
+          const msg = extractMessage(error);
+          if (msg.includes("No credentials available")) {
+            response = await SocialLogin.login({
+              provider: "google",
+              options: {
+                forceRefreshToken: false,
+              },
+            });
+          } else {
+            throw error;
+          }
+        }
 
         if (
           response.result &&
@@ -92,7 +124,12 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
       }
     } catch (error) {
       console.error("Sign-In Error:", error);
-      setErrorText("Login failed. Please try again.");
+      const msg = extractMessage(error);
+      if (msg.includes("No credentials available")) {
+        setErrorText("No Google account credential found. Please try again.");
+      } else {
+        setErrorText("Login failed. Please try again.");
+      }
       setIsLoading(false);
     }
   };

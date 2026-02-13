@@ -4,7 +4,14 @@ import {
   setupElectronDeepLinking,
 } from "@capacitor-community/electron";
 import type { MenuItemConstructorOptions } from "electron";
-import { app, MenuItem, ipcMain, session, BrowserWindow } from "electron";
+import {
+  app,
+  MenuItem,
+  ipcMain,
+  session,
+  BrowserWindow,
+  shell,
+} from "electron";
 import electronIsDev from "electron-is-dev";
 import unhandled from "electron-unhandled";
 import keytar from "keytar";
@@ -191,6 +198,20 @@ ipcMain.handle("get-desktop-sources", async () => {
     name: source.name,
     thumbnail: source.thumbnail.toDataURL(),
   }));
+});
+
+ipcMain.handle("open-external-url", async (_event, url: string) => {
+  try {
+    const parsed = new URL(url);
+    if (!["http:", "https:", "otpauth:"].includes(parsed.protocol)) {
+      return false;
+    }
+    await shell.openExternal(url);
+    return true;
+  } catch (e) {
+    console.error("[Main] Failed to open external URL:", e);
+    return false;
+  }
 });
 
 // ============================================================================

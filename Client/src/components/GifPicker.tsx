@@ -333,11 +333,13 @@ export const GifPicker: React.FC<GifPickerProps> = ({ onSelect, onClose }) => {
         let results: GifResult[] = [];
         const rawItems = Array.isArray(data) ? data : data?.gifs || [];
 
-        results = rawItems.map((g: any) => ({
-          url: g.url || g.src || g.gif_src,
-          preview: g.gif_src || g.src || g.url,
-          dims: g.dim,
-        }));
+        results = rawItems
+          .filters((i: any) => i?.gif_src)
+          .map((g: any) => ({
+            url: g.gif_src,
+            preview: g.gif_src,
+            dims: g.dim,
+          }));
 
         saveToCache(`search_${search}`, results);
         setGifs(results);

@@ -1,6 +1,6 @@
 import React from "react";
 import styled from "styled-components";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 
 const ModalOverlay = styled.div`
   position: fixed;
@@ -71,69 +71,33 @@ const Button = styled.button<{ variant?: "danger" | "secondary" }>`
 
 interface UnsafeLinkModalProps {
   url: string;
-  type?: "unsafe" | "unknown";
-  isLoading?: boolean;
   onConfirm: () => void;
-  onTrust?: () => void;
   onCancel: () => void;
 }
 
 export const UnsafeLinkModal: React.FC<UnsafeLinkModalProps> = ({
   url,
-  type = "unsafe",
-  isLoading = false,
   onConfirm,
-  onTrust,
   onCancel,
 }) => {
-  const isUnsafe = type === "unsafe";
-
   return (
-    <ModalOverlay onClick={isLoading ? undefined : onCancel}>
+    <ModalOverlay onClick={onCancel}>
       <ModalContent onClick={(e) => e.stopPropagation()}>
         <Title>
-          {isLoading ? (
-            <Loader2 className="animate-spin" size={24} color="#60a5fa" />
-          ) : (
-            <AlertTriangle size={24} color={isUnsafe ? "#dc2626" : "#eab308"} />
-          )}
-          {isLoading
-            ? "Checking Link Safety..."
-            : isUnsafe
-            ? "Potential Security Risk"
-            : "External Link"}
+          <AlertTriangle size={24} color="#eab308" />
+          External Link
         </Title>
         <Message>
-          {isLoading
-            ? "Please wait while we verify this link with our security server."
-            : isUnsafe
-            ? "The link you are trying to visit has been flagged as potentially unsafe. It may contain explicit content or malicious software."
-            : "This link leads to an untrusted domain. Are you sure you want to visit?"}
+          This link leads to an untrusted domain. Are you sure you want to
+          visit?
         </Message>
         <UrlPreview>{url}</UrlPreview>
         <ButtonGroup>
           <Button variant="secondary" onClick={onCancel}>
-            {isLoading ? "Cancel" : "Go Back"}
+            Go Back
           </Button>
-          {!isUnsafe && onTrust && !isLoading && (
-            <Button
-              variant="secondary"
-              onClick={onTrust}
-              style={{ background: "#4ade80", color: "#064e3b" }}
-            >
-              Trust Domain
-            </Button>
-          )}
-          <Button
-            variant={isUnsafe ? "danger" : "secondary"}
-            onClick={onConfirm}
-            style={{ opacity: isLoading ? 0.7 : 1 }}
-          >
-            {isLoading
-              ? "Visit Anyway"
-              : isUnsafe
-              ? "Visit Anyway"
-              : "Visit Once"}
+          <Button variant="secondary" onClick={onConfirm}>
+            Visit Once
           </Button>
         </ButtonGroup>
       </ModalContent>

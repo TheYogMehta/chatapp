@@ -65,7 +65,10 @@ export class ChatClient extends EventEmitter implements IChatClient {
         sid,
       );
       this.broadcastProfileUpdate().catch((e) =>
-        console.warn("[ChatClient] Failed to broadcast profile after session creation", e),
+        console.warn(
+          "[ChatClient] Failed to broadcast profile after session creation",
+          e,
+        ),
       );
       this.emit("session_created", sid);
     });
@@ -74,12 +77,17 @@ export class ChatClient extends EventEmitter implements IChatClient {
       this.handleFrame(frame);
     });
 
-    socket.on("WS_CONNECTED", () => {
+    socket.on("WS_CONNECTED", async () => {
       console.log("[ChatClient] WS Connected");
       if (this.authService.hasToken()) {
-        const reattached = this.sessionService.reattachAllSessions();
-        if (reattached > 0) {
-          console.log(`[ChatClient] Reattached ${reattached} session(s)`);
+        try {
+          await this.sessionService.loadSessions();
+          const reattached = this.sessionService.reattachAllSessions();
+          if (reattached > 0) {
+            console.log(`[ChatClient] Reattached ${reattached} session(s)`);
+          }
+        } catch (e) {
+          console.error("[ChatClient] Failed to load/reattach sessions", e);
         }
         this.emit("session_updated");
       }
@@ -212,6 +220,7 @@ export class ChatClient extends EventEmitter implements IChatClient {
       case "AUTH_SUCCESS":
         await this.authService.handleAuthSuccess(data);
         {
+          await this.sessionService.loadSessions();
           const reattached = this.sessionService.reattachAllSessions();
           if (reattached > 0) {
             console.log(
@@ -254,7 +263,9 @@ export class ChatClient extends EventEmitter implements IChatClient {
       case "RTC_ICE":
       case "MSG":
         if (t === "MSG" && !(await this.isValidMessageSenderHash(sid, sh))) {
-          console.warn(`[ChatClient] Dropped MSG for ${sid}: sender hash mismatch`);
+          console.warn(
+            `[ChatClient] Dropped MSG for ${sid}: sender hash mismatch`,
+          );
           this.emit("notification", {
             type: "warning",
             message: "Dropped an untrusted message.",
@@ -292,9 +303,6 @@ export class ChatClient extends EventEmitter implements IChatClient {
             "Message not delivered yet. It will be retried when the peer is online.",
         });
         break;
-      case "LINK_SAFETY":
-        this.emit("link_safety_result", data);
-        break;
     }
   }
 
@@ -322,33 +330,6 @@ export class ChatClient extends EventEmitter implements IChatClient {
     priority: number,
   ): Promise<string> {
     return this.sessionService.encrypt(sid, data, priority);
-  }
-
-  public async checkLinkSafety(
-    url: string,
-  ): Promise<"SAFE" | "UNSAFE" | "UNKNOWN"> {
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        this.off("link_safety_result", handler);
-        resolve("UNKNOWN");
-      }, 5000);
-
-      const handler = (data: any) => {
-        if (data.url === url) {
-          clearTimeout(timeout);
-          this.off("link_safety_result", handler);
-          resolve(data.status);
-        }
-      };
-
-      this.on("link_safety_result", handler);
-      this.send({
-        t: "CHECK_LINK",
-        data: { url },
-        c: true,
-        p: 1,
-      });
-    });
   }
 
   public async login(token: string) {
@@ -469,6 +450,9 @@ export class ChatClient extends EventEmitter implements IChatClient {
   }
   public get isScreenEnabled() {
     return this.callService.isScreenEnabled;
+  }
+  public get canScreenShare() {
+    return this.callService.canUseScreenShare();
   }
   public get currentCallSid() {
     return this.callService.currentCallSid;

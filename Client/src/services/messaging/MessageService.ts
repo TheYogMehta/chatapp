@@ -248,43 +248,69 @@ export class MessageService extends EventEmitter {
     if (!this.client.sessionService.sessions[sid])
       throw new Error("Session not found");
 
-    const payload = await this.client.encryptForSession(
-      sid,
-      JSON.stringify({
-        t: "MSG",
-        data: {
-          type: "DELETE",
-          id: messageId,
-          timestamp: Date.now(),
-        },
-      }),
-      1,
-    );
+    // 1. Check message ownership and details
+    const rows = await queryDB("SELECT sender FROM messages WHERE id = ?", [
+      messageId,
+    ]);
+    const isMe = rows.length > 0 && rows[0].sender === "me";
 
-    this.client.send({
-      t: "MSG",
-      sid,
-      data: { payload },
-      c: true,
-      p: 1,
-    });
-
-    try {
-      await executeDB(
-        "UPDATE messages SET text = ?, type = 'deleted' WHERE id = ?",
-        ["🚫 This message was deleted", messageId],
+    // 2. If it's my message, broadcast delete to peer (unsend)
+    if (isMe) {
+      console.log(
+        `[MessageService] Deleting my message ${messageId}, sending retraction to peer`,
       );
+      const payload = await this.client.encryptForSession(
+        sid,
+        JSON.stringify({
+          t: "MSG",
+          data: {
+            type: "DELETE",
+            id: messageId,
+            timestamp: Date.now(),
+          },
+        }),
+        1,
+      );
+
+      this.client.send({
+        t: "MSG",
+        sid,
+        data: { payload },
+        c: true,
+        p: 1,
+      });
+    } else {
+      console.log(
+        `[MessageService] Deleting peer message ${messageId} locally only`,
+      );
+    }
+
+    // 3. Local Hard Delete (for both me and other)
+    try {
+      await executeDB("DELETE FROM messages WHERE id = ?", [messageId]);
+
+      // Also delete associated reactions/media
+      await executeDB("DELETE FROM reactions WHERE message_id = ?", [
+        messageId,
+      ]);
+      await executeDB("DELETE FROM media WHERE message_id = ?", [messageId]);
+
       this.client.emit("message_updated", {
         sid,
         id: messageId,
         text: "🚫 This message was deleted",
         type: "deleted",
+        // Additional flag to indicate hard delete if UI supports it,
+        // but for now we rely on the implementation plan to use a specific event or filter
+      });
+
+      // Emitting a specific 'message_deleted' event for UI to remove it entirely
+      this.client.emit("message_deleted", {
+        sid,
+        id: messageId,
       });
     } catch (e) {
-      console.error(
-        "[MessageService] Failed to mark message as deleted locally:",
-        e,
-      );
+      console.error("[MessageService] Failed to delete message locally:", e);
     }
   }
 
@@ -595,14 +621,18 @@ export class MessageService extends EventEmitter {
           try {
             const { name_version, avatar_version } = data;
             const peerRows = await queryDB(
-              "SELECT peer_name_ver, peer_avatar_ver FROM sessions WHERE sid = ?",
+              "SELECT peer_name_ver, peer_avatar_ver, peer_name, peer_avatar FROM sessions WHERE sid = ?",
               [sid],
             );
             if (peerRows.length) {
               const current = peerRows[0];
+              const missingProfileData =
+                (name_version > 0 && !current.peer_name) ||
+                (avatar_version > 0 && !current.peer_avatar);
               if (
                 name_version > (current.peer_name_ver || 0) ||
-                avatar_version > (current.peer_avatar_ver || 0)
+                avatar_version > (current.peer_avatar_ver || 0) ||
+                missingProfileData
               ) {
                 console.log(
                   `[MessageService] Peer ${sid} has newer profile (v${name_version}/${avatar_version}), requesting update...`,
@@ -635,10 +665,11 @@ export class MessageService extends EventEmitter {
                 if (!me.public_avatar.startsWith("data:")) {
                   try {
                     console.log(
-                      `[MessageService] Reading avatar file: ${me.public_avatar}`,
+                      `[MessageService] Reading avatar file via StorageService.getFileSrc: ${me.public_avatar}`,
                     );
-                    const fileData = await StorageService.readFile(
+                    const fileData = await StorageService.getFileSrc(
                       me.public_avatar,
+                      "image/jpeg",
                     );
                     avatarBase64 = this.normalizeProfileAvatarPayload(fileData);
                     console.log(
@@ -652,9 +683,8 @@ export class MessageService extends EventEmitter {
                   avatarBase64 = parts.length > 1 ? parts[1] : null;
                 }
               }
-              const normalizedAvatar = this.normalizeProfileAvatarPayload(
-                avatarBase64,
-              );
+              const normalizedAvatar =
+                this.normalizeProfileAvatarPayload(avatarBase64);
               const canInlineAvatar =
                 !!normalizedAvatar &&
                 normalizedAvatar.length <=
@@ -682,13 +712,21 @@ export class MessageService extends EventEmitter {
                 }),
                 1,
               );
-              this.client.send({ t: "MSG", sid, data: { payload: profilePayload } });
+              this.client.send({
+                t: "MSG",
+                sid,
+                data: { payload: profilePayload },
+              });
 
               if (avatarChunks.length && transferId) {
                 console.log(
                   `[MessageService] Sending chunked avatar for ${sid}: ${avatarChunks.length} chunks`,
                 );
-                for (let chunkIndex = 0; chunkIndex < avatarChunks.length; chunkIndex++) {
+                for (
+                  let chunkIndex = 0;
+                  chunkIndex < avatarChunks.length;
+                  chunkIndex++
+                ) {
                   const chunkPayload = await this.client.encryptForSession(
                     sid,
                     JSON.stringify({
@@ -749,8 +787,15 @@ export class MessageService extends EventEmitter {
                 avatarFile = avatar;
               }
             }
-            if (avatar_chunked && avatar_transfer_id && avatar_total_chunks > 0) {
-              const chunkKey = this.profileAvatarChunkKey(sid, avatar_transfer_id);
+            if (
+              avatar_chunked &&
+              avatar_transfer_id &&
+              avatar_total_chunks > 0
+            ) {
+              const chunkKey = this.profileAvatarChunkKey(
+                sid,
+                avatar_transfer_id,
+              );
               this.profileAvatarChunkBuffer.set(chunkKey, {
                 totalChunks: avatar_total_chunks,
                 parts: new Array(avatar_total_chunks),
@@ -828,10 +873,19 @@ export class MessageService extends EventEmitter {
             }
             this.profileAvatarChunkBuffer.delete(chunkKey);
             const base64 = buffer.parts.join("");
-            const avatarFile = await StorageService.saveProfileImage(base64, sid);
+            const avatarFile = await StorageService.saveProfileImage(
+              base64,
+              sid,
+            );
             await executeDB(
               "UPDATE sessions SET peer_name = ?, peer_avatar = ?, peer_name_ver = ?, peer_avatar_ver = ? WHERE sid = ?",
-              [buffer.name, avatarFile, buffer.nameVersion, buffer.avatarVersion, sid],
+              [
+                buffer.name,
+                avatarFile,
+                buffer.nameVersion,
+                buffer.avatarVersion,
+                sid,
+              ],
             );
             this.client.emit("session_updated");
           } catch (e) {

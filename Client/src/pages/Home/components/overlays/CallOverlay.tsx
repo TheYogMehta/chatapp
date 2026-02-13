@@ -86,6 +86,7 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
   }, [callState?.peerAvatar]);
 
   const client = ChatClient.getInstance();
+  const canScreenShare = client.canScreenShare;
   useEffect(() => {
     const handleVideoToggle = (data: { enabled: boolean }) => {
       setIsVideoEnabled(data.enabled);
@@ -361,18 +362,14 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
             </IconButton>
           )}
 
-          {(isScreenEnabled || callState.type === "Screen") && (
+          {canScreenShare && (
             <IconButton
               variant={isScreenEnabled ? "primary" : "glass"}
               isActive={isScreenEnabled}
               size="sm"
               onClick={toggleScreen}
             >
-              {isScreenEnabled ? (
-                <MonitorOff size={16} />
-              ) : (
-                <Monitor size={16} />
-              )}
+              {isScreenEnabled ? <MonitorOff size={16} /> : <Monitor size={16} />}
             </IconButton>
           )}
 
@@ -520,18 +517,20 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
               {isVideoEnabled ? <Video size={28} /> : <VideoOff size={28} />}
             </IconButton>
 
-            <IconButton
-              variant={isScreenEnabled ? "primary" : "glass"}
-              isActive={isScreenEnabled}
-              size="xl"
-              onClick={toggleScreen}
-            >
-              {isScreenEnabled ? (
-                <MonitorOff size={28} />
-              ) : (
-                <Monitor size={28} />
-              )}
-            </IconButton>
+            {canScreenShare && (
+              <IconButton
+                variant={isScreenEnabled ? "primary" : "glass"}
+                isActive={isScreenEnabled}
+                size="xl"
+                onClick={toggleScreen}
+              >
+                {isScreenEnabled ? (
+                  <MonitorOff size={28} />
+                ) : (
+                  <Monitor size={28} />
+                )}
+              </IconButton>
+            )}
 
             <IconButton variant="danger" size="xl" onClick={onHangup}>
               <PhoneOff size={28} />

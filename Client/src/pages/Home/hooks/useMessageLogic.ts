@@ -112,6 +112,13 @@ export const useMessageLogic = ({
       loadSessions();
     };
 
+    const onMessageDeleted = ({ sid, id }: any) => {
+      if (sid === activeChatRef.current) {
+        setMessages((prev) => prev.filter((m) => m.id !== id));
+      }
+      loadSessions(); // Update last message in sidebar
+    };
+
     const handleRateLimit = () => {
       setIsRateLimited(true);
       setTimeout(() => setIsRateLimited(false), 1000);
@@ -123,14 +130,13 @@ export const useMessageLogic = ({
     client.on("message_updated", onMessageUpdated);
     client.on("rate_limit_exceeded", handleRateLimit);
 
-    client.on("rate_limit_exceeded", handleRateLimit);
-
     return () => {
       client.off("message", onMsg);
       client.off("download_progress", onDownloadProgress);
       client.off("file_downloaded", onFileDownloaded);
       client.off("message_status", onMessageStatus);
       client.off("message_updated", onMessageUpdated);
+      client.off("message_deleted", onMessageDeleted);
       client.off("rate_limit_exceeded", handleRateLimit);
     };
   }, [loadSessions, activeChatRef]);
@@ -157,11 +163,7 @@ export const useMessageLogic = ({
           }
         : undefined;
 
-    const isGif =
-      /https?:\/\/(?:www\.)?(?:tenor\.com|giphy\.com|media\.giphy\.com|.*\.gif)/i.test(
-        currentInput,
-      );
-    const msgType = isGif ? "gif" : "text";
+    const msgType = "text";
 
     try {
       await ChatClient.sendMessage(

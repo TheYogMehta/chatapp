@@ -692,13 +692,14 @@ export const ReactionBubble = styled.div<{ isMe: boolean }>`
   border-radius: 20px;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 4px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
   font-size: 11px;
   color: #aebac1;
   z-index: 10;
   cursor: pointer;
-  white-space: nowrap;
+  white-space: normal;
   user-select: none;
 `;
 

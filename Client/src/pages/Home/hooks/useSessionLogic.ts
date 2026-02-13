@@ -49,7 +49,7 @@ export const useSessionLogic = () => {
         lastMsg: r.lastMsg || "",
         lastMsgType: r.lastMsgType || "text",
         lastTs: r.lastTs || 0,
-        unread: r.unread || 0,
+        unread: r.sid === activeChatRef.current ? 0 : r.unread || 0,
         online: ChatClient.sessions[r.sid]?.online || false,
       }));
       setSessions(formatted);
@@ -90,6 +90,12 @@ export const useSessionLogic = () => {
       });
 
     const onSessionUpdate = () => {
+      if (activeChatRef.current) {
+        executeDB(
+          "UPDATE messages SET is_read = 1 WHERE sid = ? AND sender != 'me'",
+          [activeChatRef.current],
+        ).catch((e) => console.warn("Failed to mark active chat as read", e));
+      }
       loadSessions();
       if (activeChatRef.current && client.sessions[activeChatRef.current]) {
         setPeerOnline(client.sessions[activeChatRef.current].online);

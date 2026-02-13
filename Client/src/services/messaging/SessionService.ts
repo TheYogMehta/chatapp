@@ -112,8 +112,11 @@ export class SessionService extends EventEmitter {
         avatarData = me.public_avatar;
       } else {
         try {
-          const base64 = await StorageService.readFile(me.public_avatar);
-          if (base64) avatarData = `data:image/jpeg;base64,${base64}`;
+          const fileSrc = await StorageService.getFileSrc(
+            me.public_avatar,
+            "image/jpeg",
+          );
+          if (fileSrc) avatarData = fileSrc;
         } catch (_e) {}
       }
     }
@@ -137,8 +140,11 @@ export class SessionService extends EventEmitter {
           ) {
             avatarData = account.avatarUrl;
           } else {
-            const base64 = await StorageService.readFile(account.avatarUrl);
-            if (base64) avatarData = `data:image/jpeg;base64,${base64}`;
+            const fileSrc = await StorageService.getFileSrc(
+              account.avatarUrl,
+              "image/jpeg",
+            );
+            if (fileSrc) avatarData = fileSrc;
           }
         }
       } catch (_e) {}
@@ -188,6 +194,9 @@ export class SessionService extends EventEmitter {
       }
     }
 
+    const resolvedPeerNameVer = peerName ? Number(peerNameVer || 0) : 0;
+    const resolvedPeerAvatarVer = peerAvatarFile ? Number(peerAvatarVer || 0) : 0;
+
     this.sessions[sid] = {
       cryptoKey: sharedKey,
       online: true,
@@ -195,8 +204,8 @@ export class SessionService extends EventEmitter {
       peerEmailHash: resolvedPeerEmailHash,
       peerName: peerName || undefined,
       peerAvatar: peerAvatarFile || undefined,
-      peer_name_ver: Number(peerNameVer || 0),
-      peer_avatar_ver: Number(peerAvatarVer || 0),
+      peer_name_ver: resolvedPeerNameVer,
+      peer_avatar_ver: resolvedPeerAvatarVer,
     };
     const jwk = await crypto.subtle.exportKey("jwk", sharedKey);
     await WorkerManager.getInstance().initSession(sid, jwk);
@@ -226,10 +235,10 @@ export class SessionService extends EventEmitter {
         resolvedPeerEmailHash || null,
         peerName || null,
         peerAvatarFile || null,
-        Number(peerNameVer || 0),
-        Number(peerNameVer || 0),
-        Number(peerAvatarVer || 0),
-        Number(peerAvatarVer || 0),
+        resolvedPeerNameVer,
+        resolvedPeerNameVer,
+        resolvedPeerAvatarVer,
+        resolvedPeerAvatarVer,
         sid,
       ],
     );

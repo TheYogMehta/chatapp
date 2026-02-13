@@ -50,23 +50,30 @@ export const StorageService = {
   },
 
   async getProfileImage(identifier: string): Promise<string | null> {
-    const fileName = `${identifier}.jpg`;
-    const path = `${PROFILE_DIR}/${fileName}`;
+    const raw = (identifier || "").split("/").pop() || identifier;
+    const candidates = Array.from(
+      new Set([
+        raw,
+        raw.endsWith(".jpg") ? raw : `${raw}.jpg`,
+      ]),
+    );
 
-    try {
-      const file = await Filesystem.readFile({
-        path,
-        directory: Directory.Data,
-        encoding: Encoding.UTF8,
-      });
+    for (const fileName of candidates) {
+      try {
+        const file = await Filesystem.readFile({
+          path: `${PROFILE_DIR}/${fileName}`,
+          directory: Directory.Data,
+          encoding: Encoding.UTF8,
+        });
 
-      const base64 = typeof file.data === "string" ? file.data : "";
-      if (!base64) return null;
-
-      return `data:image/jpeg;base64,${base64}`;
-    } catch (e) {
-      return null;
+        const base64 = typeof file.data === "string" ? file.data : "";
+        if (base64) return `data:image/jpeg;base64,${base64}`;
+      } catch (_e) {
+        // Try next candidate.
+      }
     }
+
+    return null;
   },
 
   saveRawFile: async (
@@ -211,16 +218,23 @@ export const StorageService = {
     const isLocal = StorageUtils.isLocalSystemPath(fileName);
 
     try {
-      if (!isLocal && fileName.endsWith(".jpg")) {
-        try {
-          const file = await Filesystem.readFile({
-            path: `${PROFILE_DIR}/${fileName}`,
-            directory: Directory.Data,
-            encoding: Encoding.UTF8,
-          });
-          return typeof file.data === "string" ? file.data : "";
-        } catch (e) {
-          // Fallback to vault
+      if (!isLocal) {
+        const raw = (fileName || "").split("/").pop() || fileName;
+        const profileCandidates = Array.from(
+          new Set([raw, raw.endsWith(".jpg") ? raw : `${raw}.jpg`]),
+        );
+        for (const profileFile of profileCandidates) {
+          try {
+            const file = await Filesystem.readFile({
+              path: `${PROFILE_DIR}/${profileFile}`,
+              directory: Directory.Data,
+              encoding: Encoding.UTF8,
+            });
+            const data = typeof file.data === "string" ? file.data : "";
+            if (data) return data;
+          } catch (_e) {
+            // Continue to next candidate/fallback.
+          }
         }
       }
 
@@ -282,12 +296,35 @@ export const StorageService = {
           });
         }
       } else {
-        const file = await Filesystem.readFile({
-          path,
-          directory,
-          encoding: Encoding.UTF8,
-        });
-        base64Data = typeof file.data === "string" ? file.data : "";
+        const raw = (fileName || "").split("/").pop() || fileName;
+        const profileCandidates = Array.from(
+          new Set([raw, raw.endsWith(".jpg") ? raw : `${raw}.jpg`]),
+        );
+
+        // Profile images are stored under PROFILE_DIR, not VAULT_DIR.
+        for (const profileName of profileCandidates) {
+          try {
+            const profileRead = await Filesystem.readFile({
+              path: `${PROFILE_DIR}/${profileName}`,
+              directory: Directory.Data,
+              encoding: Encoding.UTF8,
+            });
+            base64Data =
+              typeof profileRead.data === "string" ? profileRead.data : "";
+            if (base64Data) break;
+          } catch (_e) {
+            // Try next candidate/fallback.
+          }
+        }
+
+        if (!base64Data) {
+          const file = await Filesystem.readFile({
+            path,
+            directory,
+            encoding: Encoding.UTF8,
+          });
+          base64Data = typeof file.data === "string" ? file.data : "";
+        }
       }
 
       const mime = StorageUtils.getMimeType(fileName, mimeType);

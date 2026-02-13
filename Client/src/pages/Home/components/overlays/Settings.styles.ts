@@ -312,12 +312,14 @@ export const SignOutButton = styled.button`
   padding: ${spacing[3]} ${spacing[5]};
   border-radius: ${radii.md};
   background-color: ${colors.background.tertiary};
-  color: white;
+  color: ${colors.text.primary};
   border: none;
   cursor: pointer;
+  font-weight: 600;
+  transition: background-color 0.2s ease, color 0.2s ease;
 
   &:hover {
-    background-color: ${colors.background.tertiary}dd;
+    background-color: ${colors.surface.highlight};
   }
 
   &:disabled {

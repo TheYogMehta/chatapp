@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -723,60 +722,8 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 				Data: json.RawMessage(respBytes),
 			})
 
-		case "CHECK_LINK":
-			if client.email == "" {
-				s.send(client, Frame{
-					T:    "ERROR",
-					Data: json.RawMessage(`{"message":"Auth required"}`),
-				})
-				continue
-			}
-
-			var req struct {
-				URL string `json:"url"`
-			}
-			if err := json.Unmarshal(frame.Data, &req); err != nil {
-				continue
-			}
-
-			status := checkLinkSafety(req.URL)
-			resp := map[string]string{
-				"url":    req.URL,
-				"status": status,
-			}
-			respBytes, _ := json.Marshal(resp)
-			s.send(client, Frame{
-				T:    "LINK_SAFETY_RESULT",
-				Data: json.RawMessage(respBytes),
-			})
 		}
 	}
-}
-
-func checkLinkSafety(urlStr string) string {
-	u, err := http.NewRequest("GET", urlStr, nil)
-	if err != nil {
-		return "UNSAFE"
-	}
-
-	hostname := u.URL.Hostname()
-	blacklist := []string{
-		"unsafe.com",
-		"malware.com",
-		"phishing.site",
-	}
-	for _, bad := range blacklist {
-		if hostname == bad || strings.HasSuffix(hostname, "."+bad) {
-			return "UNSAFE"
-		}
-	}
-
-	_, err = net.LookupHost(hostname)
-	if err != nil {
-		return "UNKNOWN"
-	}
-
-	return "SAFE"
 }
 
 func htmlUnescape(s string) string {

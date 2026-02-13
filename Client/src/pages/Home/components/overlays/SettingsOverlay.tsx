@@ -39,6 +39,7 @@ import { ProfileSettings } from "../settings/ProfileSettings";
 import { SecuritySettings } from "../settings/SecuritySettings";
 import { AppearanceSettings } from "../settings/AppearanceSettings";
 import { StorageService } from "../../../../services/storage/StorageService";
+import { deleteItemsByOwner } from "../../../../utils/secureStorage";
 
 interface SettingsOverlayProps {
   onClose: () => void;
@@ -119,12 +120,15 @@ export const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
             }
 
             await StorageService.deleteProfileImage(dbName);
+            await deleteItemsByOwner(currentUserEmail);
+            localStorage.removeItem(`secure_chat_salt_${currentUserEmail}`);
 
             await setActiveUser(currentUserEmail);
 
             const keysToClear = [
               "app_lock_pin",
               "MASTER_KEY",
+              "vault_mfa_secret",
               "identity_priv",
               "identity_pub",
               "auth_token",
@@ -178,9 +182,9 @@ export const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
         style={{
           padding: "18px 22px",
           borderRadius: "12px",
-          background: "rgba(10, 19, 45, 0.95)",
-          border: "1px solid rgba(255, 255, 255, 0.12)",
-          color: "white",
+          background: colors.surface.primary,
+          border: `1px solid ${colors.border.subtle}`,
+          color: colors.text.primary,
           minWidth: "220px",
           textAlign: "center",
         }}
@@ -216,7 +220,7 @@ export const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
       case "Account":
         return (
           <div>
-            <h3 style={{ marginTop: 0, color: "white" }}>Manage Accounts</h3>
+            <h3 style={{ marginTop: 0, color: colors.text.primary }}>Manage Accounts</h3>
             <div style={{ marginBottom: "30px" }}>
               {accounts.map((acc) => (
                 <AccountItem
@@ -236,7 +240,7 @@ export const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                       size={32}
                       style={{ background: colors.background.tertiary }}
                     />
-                    <span style={{ color: "white" }}>{acc.email}</span>
+                    <span style={{ color: colors.text.primary }}>{acc.email}</span>
                     {acc.email === currentUserEmail && (
                       <span
                         style={{
@@ -259,7 +263,7 @@ export const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                         padding: "6px 12px",
                         borderRadius: "4px",
                         background: colors.primary.main,
-                        color: "white",
+                        color: colors.text.inverse,
                         border: "none",
                         cursor: isDeletingAccount ? "not-allowed" : "pointer",
                         opacity: isDeletingAccount ? 0.6 : 1,
@@ -272,7 +276,7 @@ export const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
               ))}
             </div>
 
-            <h3 style={{ color: "white" }}>Danger Zone</h3>
+            <h3 style={{ color: colors.text.primary }}>Danger Zone</h3>
             <DangerZone>
               <SignOutButton disabled={isDeletingAccount} onClick={handleSignOut}>
                 Sign Out
@@ -381,7 +385,7 @@ export const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
           )}
           {activeCategory === "Account" && (
             <div>
-              <h3 style={{ marginTop: 0, color: "white" }}>Manage Accounts</h3>
+              <h3 style={{ marginTop: 0, color: colors.text.primary }}>Manage Accounts</h3>
               <div style={{ marginBottom: "30px" }}>
                 {accounts.map((acc) => (
                   <AccountItem
@@ -401,7 +405,7 @@ export const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                         size={32}
                         style={{ background: colors.background.tertiary }}
                       />
-                      <span style={{ color: "white" }}>{acc.email}</span>
+                      <span style={{ color: colors.text.primary }}>{acc.email}</span>
                       {acc.email === currentUserEmail && (
                         <span
                           style={{
@@ -424,7 +428,7 @@ export const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                           padding: "6px 12px",
                           borderRadius: "4px",
                           background: colors.primary.main,
-                          color: "white",
+                          color: colors.text.inverse,
                           border: "none",
                           cursor: isDeletingAccount ? "not-allowed" : "pointer",
                           opacity: isDeletingAccount ? 0.6 : 1,
@@ -437,7 +441,7 @@ export const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                 ))}
               </div>
 
-              <h3 style={{ color: "white" }}>Danger Zone</h3>
+              <h3 style={{ color: colors.text.primary }}>Danger Zone</h3>
               <DangerZone>
                 <SignOutButton disabled={isDeletingAccount} onClick={handleSignOut}>
                   Sign Out

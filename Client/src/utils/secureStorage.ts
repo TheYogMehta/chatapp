@@ -97,3 +97,14 @@ export const deleteItem = async (id: string): Promise<void> => {
     request.onerror = () => reject(request.error);
   });
 };
+
+export const deleteItemsByOwner = async (ownerEmail: string): Promise<number> => {
+  const allItems = await getAllItems();
+  const ownedItems = allItems.filter((item) => item.metadata?.owner === ownerEmail);
+
+  for (const item of ownedItems) {
+    await deleteItem(item.id);
+  }
+
+  return ownedItems.length;
+};
