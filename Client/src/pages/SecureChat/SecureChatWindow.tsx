@@ -28,6 +28,8 @@ import { useSecureChat } from "./hooks/useSecureChat";
 import SavePasswordModal from "./SavePasswordModal";
 import { colors } from "../../theme/design-system";
 import { platformLaunchService } from "../../services/mfa/platform-launch.service";
+import { Capacitor } from "@capacitor/core";
+import "./SecureChatWindow.css";
 
 interface SecureChatWindowProps {
   onBack?: () => void;
@@ -60,7 +62,7 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
   const [pendingPin, setPendingPin] = useState<string | null>(null);
   const [mfaToken, setMfaToken] = useState("");
   const [canOpenOtpLink, setCanOpenOtpLink] = useState(false);
-  const [showOnboardingDetails, setShowOnboardingDetails] = useState(false);
+  const [autoOpenTriggered, setAutoOpenTriggered] = useState(false);
   const MFA_SETUP_SENTINEL = "__setup__";
   const handleBack = () => onBack?.();
 
@@ -81,6 +83,20 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
       active = false;
     };
   }, [mfaOnboarding]);
+
+  useEffect(() => {
+    if (
+      autoOpenTriggered ||
+      Capacitor.getPlatform() !== "android" ||
+      !mfaOnboarding?.otpAuthUri ||
+      !canOpenOtpLink
+    ) {
+      return;
+    }
+
+    setAutoOpenTriggered(true);
+    platformLaunchService.openOtpAuthUri(mfaOnboarding.otpAuthUri).catch(() => {});
+  }, [autoOpenTriggered, canOpenOtpLink, mfaOnboarding]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -206,47 +222,40 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
     return items.filter((item) => (searchContentById[item.id] || "").includes(q));
   }, [items, searchQuery, searchContentById]);
 
+  const themeVars = {
+    "--sc-bg-primary": colors.background.primary,
+    "--sc-bg-secondary": colors.background.secondary,
+    "--sc-surface-primary": colors.surface.primary,
+    "--sc-text-primary": colors.text.primary,
+    "--sc-text-secondary": colors.text.secondary,
+    "--sc-text-inverse": colors.text.inverse,
+    "--sc-border-subtle": colors.border.subtle,
+    "--sc-primary-main": colors.primary.main,
+    "--sc-status-error": colors.status.error,
+  } as React.CSSProperties;
+
   if (!isUnlocked) {
     if (pendingPin) {
       return (
-        <div
-          style={{
-            width: "100%",
-            height: "100%",
-            display: "flex",
-            flexDirection: "column",
-            background: colors.background.primary,
-            padding: "16px",
-            paddingTop: "max(16px, env(safe-area-inset-top, 0px))",
-            color: colors.text.primary,
-            overflowY: "auto",
-          }}
-        >
+        <div className="secure-chat-mfa" style={themeVars}>
           <button
             onClick={() => {
               setPendingPin(null);
               setMfaToken("");
+              setAutoOpenTriggered(false);
               clearMfaOnboarding();
             }}
-            style={{
-              alignSelf: "flex-start",
-              marginBottom: "12px",
-              border: `1px solid ${colors.border.subtle}`,
-              background: "transparent",
-              color: colors.text.secondary,
-              borderRadius: "8px",
-              padding: "6px 10px",
-              cursor: "pointer",
-            }}
+            className="secure-chat-back-btn"
           >
             Back
           </button>
-          <h2 style={{ margin: "0 0 8px 0" }}>Two-Factor Verification</h2>
-          <p style={{ margin: "0 0 14px 0", color: colors.text.secondary }}>
+          <h2 className="sc-title">Two-Factor Verification</h2>
+          <p className="sc-subtitle">
             Enter your 6-digit authenticator code.
           </p>
 
-          {canOpenOtpLink && mfaOnboarding?.otpAuthUri && (
+          {(Capacitor.getPlatform() === "android" || canOpenOtpLink) &&
+            mfaOnboarding?.otpAuthUri && (
             <button
               onClick={async () => {
                 const opened = await platformLaunchService.openOtpAuthUri(
@@ -256,16 +265,7 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
                   alert("Could not open authenticator app. Use QR/manual setup.");
                 }
               }}
-              style={{
-                marginBottom: "12px",
-                height: "40px",
-                border: "none",
-                borderRadius: "10px",
-                background: colors.primary.main,
-                color: colors.text.inverse,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
+              className="secure-chat-primary-btn"
             >
               Open Authenticator App
             </button>
@@ -273,65 +273,38 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
 
           {mfaOnboarding && (
             <>
-              <button
-                onClick={() => setShowOnboardingDetails((s) => !s)}
-                style={{
-                  marginBottom: "12px",
-                  height: "38px",
-                  borderRadius: "10px",
-                  border: `1px solid ${colors.border.subtle}`,
-                  background: "transparent",
-                  color: colors.text.secondary,
-                  cursor: "pointer",
-                }}
-              >
-                {showOnboardingDetails ? "Hide setup details" : "Show setup details"}
-              </button>
-              {showOnboardingDetails && (
-                <>
-                  {mfaOnboarding.qrDataUrl && (
-                    <div
-                      style={{
-                        background: colors.surface.primary,
-                        border: `1px solid ${colors.border.subtle}`,
-                        borderRadius: "12px",
-                        padding: "12px",
-                        marginBottom: "12px",
-                        textAlign: "center",
-                      }}
-                    >
-                      <img
-                        src={mfaOnboarding.qrDataUrl}
-                        alt="MFA QR"
-                        style={{
-                          width: "220px",
-                          height: "220px",
-                          maxWidth: "100%",
-                          borderRadius: "10px",
-                        }}
-                      />
-                    </div>
-                  )}
-                  <div
-                    style={{
-                      background: colors.surface.primary,
-                      border: `1px solid ${colors.border.subtle}`,
-                      borderRadius: "12px",
-                      padding: "12px",
-                      marginBottom: "12px",
-                      fontSize: "13px",
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    <div>Secret (Base32): {mfaOnboarding.secret}</div>
-                    <div>Account: {mfaOnboarding.accountName}</div>
-                    <div>Issuer: {mfaOnboarding.issuer}</div>
-                    <div>Type: Time-based (TOTP)</div>
-                    <div>Digits: {mfaOnboarding.digits}</div>
-                    <div>Interval: {mfaOnboarding.period}s</div>
-                  </div>
-                </>
+              {mfaOnboarding.qrDataUrl && (
+                <div className="secure-chat-card secure-chat-qr-wrap">
+                  <img
+                    src={mfaOnboarding.qrDataUrl}
+                    alt="MFA QR"
+                    className="secure-chat-qr"
+                  />
+                </div>
               )}
+              <div className="secure-chat-card">
+                <div className="secure-chat-secret-label">
+                  Secret (Base32)
+                </div>
+                <div className="secure-chat-secret-row">
+                  <code className="secure-chat-secret-code">
+                    {mfaOnboarding.secret}
+                  </code>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(mfaOnboarding.secret);
+                      } catch {
+                        // no-op
+                      }
+                    }}
+                    aria-label="Copy secret"
+                    className="secure-chat-icon-btn"
+                  >
+                    <IonIcon icon={copyOutline} />
+                  </button>
+                </div>
+              </div>
             </>
           )}
 
@@ -340,18 +313,7 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
             onChange={(e) => setMfaToken(e.target.value.replace(/\D/g, "").slice(0, 6))}
             placeholder="Enter 6-digit code"
             inputMode="numeric"
-            style={{
-              width: "100%",
-              height: "44px",
-              borderRadius: "10px",
-              border: `1px solid ${colors.border.subtle}`,
-              background: colors.background.secondary,
-              color: colors.text.primary,
-              padding: "0 12px",
-              marginBottom: "10px",
-              outline: "none",
-              letterSpacing: "2px",
-            }}
+            className="secure-chat-otp-input"
           />
           <button
             onClick={async () => {
@@ -362,68 +324,39 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
               if (result.ok) {
                 setPendingPin(null);
                 setMfaToken("");
+                setAutoOpenTriggered(false);
                 clearMfaOnboarding();
               }
             }}
             disabled={mfaToken.length !== 6}
-            style={{
-              height: "42px",
-              border: "none",
-              borderRadius: "10px",
-              background:
-                mfaToken.length === 6
-                  ? colors.primary.main
-                  : colors.background.tertiary,
-              color: mfaToken.length === 6 ? colors.text.inverse : colors.text.secondary,
-              cursor: mfaToken.length === 6 ? "pointer" : "not-allowed",
-              fontWeight: 600,
-            }}
+            className={`secure-chat-verify-btn ${
+              mfaToken.length === 6 ? "enabled" : "disabled"
+            }`}
           >
             Verify & Unlock
           </button>
           {vaultError && (
-            <p style={{ marginTop: "10px", color: colors.status.error }}>{vaultError}</p>
+            <p className="secure-chat-error">{vaultError}</p>
           )}
         </div>
       );
     }
 
     return (
-      <div style={{ width: "100%", height: "100%", position: "relative" }}>
-        <div
-          style={{
-            width: "100%",
-            height: "100%",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "center",
-            alignItems: "center",
-            padding: "16px",
-            textAlign: "center",
-            background: colors.background.primary,
-            color: colors.text.primary,
-          }}
-        >
-          <h2 style={{ margin: "0 0 8px 0" }}>
+      <div className="secure-chat-locked" style={themeVars}>
+        <div className="secure-chat-locked-inner">
+          <h2 className="sc-title">
             {isSetup ? "Secure Vault Locked" : "Secure Vault Setup"}
           </h2>
-          <p style={{ margin: "0 0 14px 0", color: colors.text.secondary }}>
+          <p className="sc-subtitle">
             {isSetup
               ? "Use your authenticator app to unlock."
               : "Set up authenticator to secure your vault."}
           </p>
-          <div style={{ display: "flex", gap: "10px" }}>
+          <div className="secure-chat-row">
             <button
               onClick={handleBack}
-              style={{
-                height: "40px",
-                padding: "0 14px",
-                borderRadius: "10px",
-                border: `1px solid ${colors.border.subtle}`,
-                background: "transparent",
-                color: colors.text.secondary,
-                cursor: "pointer",
-              }}
+              className="secure-chat-btn-secondary"
             >
               Back
             </button>
@@ -434,35 +367,18 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
                   if (result.requiresMfa) {
                     setPendingPin(MFA_SETUP_SENTINEL);
                     setMfaToken("");
-                    setShowOnboardingDetails(!isSetup);
+                    setAutoOpenTriggered(false);
                   }
                 });
               }}
-              style={{
-                height: "40px",
-                padding: "0 14px",
-                borderRadius: "10px",
-                border: "none",
-                background: colors.primary.main,
-                color: colors.text.inverse,
-                cursor: "pointer",
-                fontWeight: 600,
-              }}
+              className="secure-chat-btn-primary"
             >
               {isSetup ? "Unlock" : "Start Setup"}
             </button>
           </div>
         </div>
         {vaultError && (
-          <div
-            style={{
-              position: "absolute",
-              bottom: "100px",
-              width: "100%",
-              textAlign: "center",
-              color: colors.status.error,
-            }}
-          >
+          <div className="secure-chat-locked-error">
             <p>{vaultError}</p>
           </div>
         )}
@@ -471,83 +387,27 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
   }
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        background: colors.background.primary,
-        position: "relative",
-        paddingTop: "env(safe-area-inset-top, 0px)",
-      }}
-    >
-      <div
-        style={{
-          background: "rgba(18, 18, 18, 0.95)",
-          borderBottom: `1px solid ${colors.border.subtle}`,
-          flexShrink: 0,
-          padding: "12px 16px",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+    <div className="secure-chat-root" style={themeVars}>
+      <div className="secure-chat-header">
+        <div className="secure-chat-header-left">
           <button
             onClick={handleBack}
             aria-label="Back"
-            style={{
-              background: "transparent",
-              border: `1px solid ${colors.border.subtle}`,
-              color: colors.text.secondary,
-              borderRadius: "10px",
-              width: "34px",
-              height: "34px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "pointer",
-              flexShrink: 0,
-            }}
+            className="secure-chat-back-icon-btn"
           >
-            <IonIcon icon={arrowBackOutline} style={{ fontSize: "18px" }} />
+            <IonIcon icon={arrowBackOutline} className="icon-18" />
           </button>
-          <div
-            style={{
-              width: "40px",
-              height: "40px",
-              borderRadius: "50%",
-              background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              marginRight: "12px",
-              boxShadow: "0 4px 12px rgba(16, 185, 129, 0.3)",
-            }}
-          >
+          <div className="secure-chat-shield">
             <IonIcon
               icon={shieldCheckmarkOutline}
-              style={{ color: "white", fontSize: "20px" }}
+              className="icon-20 icon-white"
             />
           </div>
           <div>
-            <h2
-              style={{
-                margin: 0,
-                color: colors.text.primary,
-                fontSize: "1.1rem",
-                fontWeight: 600,
-              }}
-            >
+            <h2 className="secure-chat-title">
               Secure Vault
             </h2>
-            <p
-              style={{
-                margin: "2px 0 0 0",
-                color: "#10b981",
-                fontSize: "0.8rem",
-              }}
-            >
+            <p className="secure-chat-caption">
               Encrypted & Local
             </p>
           </div>
@@ -561,195 +421,86 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
             });
           }}
           aria-label="Search vault"
-          style={{
-            background: showSearch ? "rgba(79,70,229,0.22)" : "transparent",
-            border: `1px solid ${colors.border.subtle}`,
-            color: colors.text.secondary,
-            borderRadius: "10px",
-            width: "34px",
-            height: "34px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            flexShrink: 0,
-          }}
+          className={`secure-chat-search-btn ${showSearch ? "active" : ""}`}
         >
-          <IonIcon icon={searchOutline} style={{ fontSize: "18px" }} />
+          <IonIcon icon={searchOutline} className="icon-18" />
         </button>
 
       </div>
       {showSearch && (
-        <div
-          style={{
-            padding: "10px 16px",
-            borderBottom: `1px solid ${colors.border.subtle}`,
-            background: "rgba(255,255,255,0.02)",
-          }}
-        >
+        <div className="secure-chat-search-wrap">
           <input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search files, usernames, messages..."
-            style={{
-              width: "100%",
-              height: "38px",
-              borderRadius: "10px",
-              border: `1px solid ${colors.border.subtle}`,
-              background: "rgba(255,255,255,0.04)",
-              color: colors.text.primary,
-              padding: "0 12px",
-              outline: "none",
-            }}
+            className="secure-chat-search-input"
           />
         </div>
       )}
 
-      <div
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: "16px",
-          paddingBottom: "calc(96px + env(safe-area-inset-bottom, 0px))",
-        }}
-      >
+      <div className="secure-chat-content">
         <input
           type="file"
           ref={fileInputRef}
-          style={{ display: "none" }}
+          className="secure-chat-hidden-input"
           onChange={handleFileSelect}
         />
 
         {filteredItems.length === 0 ? (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              height: "100%",
-              opacity: 0.7,
-              marginTop: "-40px",
-            }}
-          >
-            <div
-              style={{
-                width: "80px",
-                height: "80px",
-                borderRadius: "50%",
-                background: "rgba(255,255,255,0.05)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                marginBottom: "20px",
-              }}
-            >
+          <div className="secure-chat-empty">
+            <div className="secure-chat-empty-icon-wrap">
               <IonIcon
                 icon={lockClosedOutline}
-                style={{ fontSize: "32px", color: colors.text.secondary }}
+                className="icon-32 icon-muted"
               />
             </div>
-            <p
-              style={{
-                color: colors.text.primary,
-                fontSize: "1.1rem",
-                fontWeight: 500,
-                margin: 0,
-              }}
-            >
+            <p className="secure-chat-empty-title">
               {searchQuery.trim() ? "No matching items" : "Vault is empty"}
             </p>
-            <p
-              style={{
-                color: colors.text.tertiary,
-                fontSize: "0.9rem",
-                marginTop: "8px",
-              }}
-            >
+            <p className="secure-chat-empty-subtitle">
               {searchQuery.trim()
                 ? "Try a different search term"
                 : "Use the message bar or + to add vault items"}
             </p>
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-            {filteredItems.map((item, index) => (
+          <div className="secure-chat-list">
+            {filteredItems.map((item) => (
               <div
                 key={item.id}
                 onClick={() => handleViewItem(item)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  padding: "16px",
-                  borderRadius: "16px",
-                  backgroundColor: "rgba(255, 255, 255, 0.03)",
-                  border: "1px solid rgba(255, 255, 255, 0.05)",
-                  cursor: "pointer",
-                  transition: "transform 0.2s, background-color 0.2s",
-                  animation: "slideUp 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) forwards",
-                  animationDelay: `${index * 50}ms`,
-                  opacity: 0,
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.08)";
-                  e.currentTarget.style.transform = "translateY(-2px)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.03)";
-                  e.currentTarget.style.transform = "translateY(0)";
-                }}
+                className="secure-chat-item"
               >
                 <div
-                  style={{
-                    width: "48px",
-                    height: "48px",
-                    borderRadius: "14px",
-                    backgroundColor:
-                      item.type === "password"
-                        ? "rgba(245, 158, 11, 0.15)"
-                        : item.type === "text"
-                        ? "rgba(16, 185, 129, 0.15)"
-                        : "rgba(59, 130, 246, 0.15)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    marginRight: "16px",
-                    flexShrink: 0,
-                  }}
+                  className={`secure-chat-item-icon ${
+                    item.type === "password"
+                      ? "type-password"
+                      : item.type === "text"
+                      ? "type-text"
+                      : "type-file"
+                  }`}
                 >
                   <IonIcon
                     icon={item.type === "password" ? keyOutline : documentTextOutline}
-                    style={{
-                      color:
-                        item.type === "password"
-                          ? "#fbbf24"
-                          : item.type === "text"
-                          ? "#34d399"
-                          : "#60a5fa",
-                      fontSize: "24px",
-                    }}
+                    className={`secure-chat-item-type-icon ${
+                      item.type === "password"
+                        ? "type-password"
+                        : item.type === "text"
+                        ? "type-text"
+                        : "type-file"
+                    }`}
                   />
                 </div>
 
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <h3
-                    style={{
-                      margin: "0 0 4px 0",
-                      fontSize: "1rem",
-                      fontWeight: 600,
-                      color: colors.text.primary,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
+                <div className="secure-chat-item-content">
+                  <h3 className="secure-chat-item-title">
                     {item.type === "password"
                       ? item.metadata.username || "Password"
                       : item.type === "text"
                       ? item.metadata.title || "Saved Message"
                       : item.metadata.filename || "File"}
                   </h3>
-                  <p style={{ margin: 0, fontSize: "0.8rem", color: colors.text.tertiary }}>
+                  <p className="secure-chat-item-meta">
                     {item.type === "password"
                       ? item.metadata.url || "Credential"
                       : item.type === "text"
@@ -764,24 +515,9 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
                     e.stopPropagation();
                     if (confirm("Delete this item?")) removeItem(item.id);
                   }}
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    color: colors.status.error,
-                    width: "32px",
-                    height: "32px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    borderRadius: "8px",
-                    cursor: "pointer",
-                    opacity: 0.7,
-                    transition: "opacity 0.2s",
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
-                  onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.7")}
+                  className="secure-chat-delete-btn"
                 >
-                  <IonIcon icon={trashOutline} style={{ fontSize: "20px" }} />
+                  <IonIcon icon={trashOutline} className="icon-20" />
                 </button>
               </div>
             ))}
@@ -789,43 +525,13 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
         )}
       </div>
 
-      <style>{`
-        @keyframes slideUp {
-          from { opacity: 0; transform: translateY(20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
-
-      <div
-        style={{
-          padding: "12px 16px",
-          paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))",
-          borderTop: `1px solid ${colors.border.subtle}`,
-          background: "rgba(18, 18, 18, 0.95)",
-          display: "flex",
-          alignItems: "center",
-          gap: "10px",
-          flexShrink: 0,
-        }}
-      >
+      <div className="secure-chat-composer">
         <button
           onClick={() => setShowActionSheet(true)}
           aria-label="Add vault item"
-          style={{
-            width: "42px",
-            height: "42px",
-            borderRadius: "50%",
-            border: `1px solid ${colors.border.subtle}`,
-            background: "rgba(255,255,255,0.04)",
-            color: colors.text.secondary,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            flexShrink: 0,
-          }}
+          className="secure-chat-add-btn"
         >
-          <IonIcon icon={add} style={{ fontSize: "22px" }} />
+          <IonIcon icon={add} className="icon-22" />
         </button>
 
         <input
@@ -838,37 +544,16 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
             }
           }}
           placeholder="Save an encrypted message..."
-          style={{
-            flex: 1,
-            height: "42px",
-            borderRadius: "999px",
-            border: `1px solid ${colors.border.subtle}`,
-            background: "rgba(255,255,255,0.04)",
-            color: colors.text.primary,
-            padding: "0 14px",
-            outline: "none",
-          }}
+          className="secure-chat-message-input"
         />
 
         <button
           onClick={handleStoreMessage}
           disabled={!vaultMessage.trim()}
           aria-label="Save message"
-          style={{
-            width: "42px",
-            height: "42px",
-            borderRadius: "50%",
-            border: "none",
-            background: vaultMessage.trim() ? "#4f46e5" : "rgba(79,70,229,0.4)",
-            color: "white",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: vaultMessage.trim() ? "pointer" : "not-allowed",
-            flexShrink: 0,
-          }}
+          className="secure-chat-send-btn"
         >
-          <IonIcon icon={paperPlaneOutline} style={{ fontSize: "18px" }} />
+          <IonIcon icon={paperPlaneOutline} className="icon-18" />
         </button>
       </div>
 
@@ -910,14 +595,10 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
       <IonModal
         isOpen={!!viewingItem}
         onDidDismiss={closeView}
-        className="glass-modal"
-        style={{
-          "--background": "rgba(20, 20, 20, 0.95)",
-          "--backdrop-opacity": "0.8",
-        } as React.CSSProperties}
+        className="glass-modal secure-chat-modal"
       >
         <IonHeader className="ion-no-border">
-          <IonToolbar style={{ "--background": "transparent", color: "white" } as React.CSSProperties}>
+          <IonToolbar className="secure-chat-modal-toolbar">
             <IonTitle>
               {viewingItem?.type === "password"
                 ? "Password Details"
@@ -933,64 +614,29 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
           </IonToolbar>
         </IonHeader>
 
-        <IonContent className="ion-padding" style={{ "--background": "transparent" } as React.CSSProperties}>
+        <IonContent className="ion-padding secure-chat-modal-content">
           {viewingItem && viewingItem.type === "password" && viewingItem.content && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: "20px",
-                marginTop: "10px",
-              }}
-            >
-              <div
-                style={{
-                  background: "rgba(255,255,255,0.05)",
-                  padding: "16px",
-                  borderRadius: "16px",
-                }}
-              >
-                <IonLabel
-                  style={{
-                    fontSize: "0.85rem",
-                    color: colors.text.tertiary,
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
+            <div className="secure-chat-modal-stack">
+              <div className="secure-chat-modal-card">
+                <IonLabel className="secure-chat-modal-label">
                   Website URL
                 </IonLabel>
                 <IonInput
                   readonly
                   value={viewingItem.content.url}
-                  style={{ color: "white", "--padding-start": "0" } as React.CSSProperties}
+                  className="secure-chat-modal-input"
                 />
               </div>
 
-              <div
-                style={{
-                  background: "rgba(255,255,255,0.05)",
-                  padding: "16px",
-                  borderRadius: "16px",
-                  display: "flex",
-                  alignItems: "center",
-                }}
-              >
-                <div style={{ flex: 1 }}>
-                  <IonLabel
-                    style={{
-                      fontSize: "0.85rem",
-                      color: colors.text.tertiary,
-                      display: "block",
-                      marginBottom: "8px",
-                    }}
-                  >
+              <div className="secure-chat-modal-card-row">
+                <div className="secure-chat-modal-grow">
+                  <IonLabel className="secure-chat-modal-label">
                     Username
                   </IonLabel>
                   <IonInput
                     readonly
                     value={viewingItem.content.username}
-                    style={{ color: "white", "--padding-start": "0" } as React.CSSProperties}
+                    className="secure-chat-modal-input"
                   />
                 </div>
                 <IonButton
@@ -1001,30 +647,15 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
                 </IonButton>
               </div>
 
-              <div
-                style={{
-                  background: "rgba(255,255,255,0.05)",
-                  padding: "16px",
-                  borderRadius: "16px",
-                  display: "flex",
-                  alignItems: "center",
-                }}
-              >
-                <div style={{ flex: 1 }}>
-                  <IonLabel
-                    style={{
-                      fontSize: "0.85rem",
-                      color: colors.text.tertiary,
-                      display: "block",
-                      marginBottom: "8px",
-                    }}
-                  >
+              <div className="secure-chat-modal-card-row">
+                <div className="secure-chat-modal-grow">
+                  <IonLabel className="secure-chat-modal-label">
                     Password
                   </IonLabel>
                   <IonInput
                     readonly
                     value={viewingItem.content.password}
-                    style={{ color: "white", "--padding-start": "0" } as React.CSSProperties}
+                    className="secure-chat-modal-input"
                   />
                 </div>
                 <IonButton
@@ -1038,40 +669,28 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
           )}
 
           {viewingItem && viewingItem.type === "file" && viewingItem.contentUrl && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                height: "80%",
-              }}
-            >
+            <div className="secure-chat-file-preview">
               {viewingItem.mimeType?.startsWith("image/") ? (
                 <img
                   src={viewingItem.contentUrl}
                   alt="preview"
-                  style={{ maxWidth: "100%", maxHeight: "400px", borderRadius: "8px" }}
+                  className="secure-chat-media-preview"
                 />
               ) : viewingItem.mimeType?.startsWith("video/") ? (
                 <video
                   controls
                   src={viewingItem.contentUrl}
-                  style={{ maxWidth: "100%", maxHeight: "400px", borderRadius: "8px" }}
+                  className="secure-chat-media-preview"
                 />
               ) : viewingItem.mimeType?.startsWith("audio/") ? (
-                <audio controls src={viewingItem.contentUrl} style={{ width: "100%" }} />
+                <audio controls src={viewingItem.contentUrl} className="secure-chat-audio-preview" />
               ) : (
-                <div style={{ textAlign: "center" }}>
+                <div className="secure-chat-file-fallback">
                   <IonIcon
                     icon={documentTextOutline}
-                    style={{
-                      fontSize: "64px",
-                      color: colors.text.tertiary,
-                      marginBottom: "16px",
-                    }}
+                    className="secure-chat-file-fallback-icon"
                   />
-                  <p style={{ color: colors.text.primary }}>
+                  <p className="secure-chat-file-fallback-name">
                     {viewingItem.metadata.filename}
                   </p>
                 </div>
@@ -1081,7 +700,7 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
                 href={viewingItem.contentUrl}
                 download={viewingItem.metadata.filename}
                 expand="block"
-                style={{ marginTop: "24px", width: "100%" }}
+                className="secure-chat-download-btn"
               >
                 Download File
               </IonButton>
@@ -1089,18 +708,7 @@ export const SecureChatWindow: React.FC<SecureChatWindowProps> = ({ onBack }) =>
           )}
 
           {viewingItem && viewingItem.type === "text" && typeof viewingItem.content === "string" && (
-            <div
-              style={{
-                background: "rgba(255,255,255,0.05)",
-                borderRadius: "16px",
-                padding: "16px",
-                marginTop: "12px",
-                color: colors.text.primary,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                lineHeight: 1.5,
-              }}
-            >
+            <div className="secure-chat-text-preview">
               {viewingItem.content}
             </div>
           )}

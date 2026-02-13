@@ -16,8 +16,7 @@
     "build": "tsc && electron-rebuild",
     "electron:start": "npm run build && electron --inspect=5858 ./",
     "electron:postinstall": "electron-builder install-app-deps",
-    "electron:pack": "npm run build && electron-builder install-app-deps && electron-builder build",
-    "electron:make": "npm run build && electron-builder install-app-deps && electron-builder build -p always --win --linux"
+    "electron:pack": "npm run build && electron-builder install-app-deps && electron-builder build -p always --win --linux"
   },
   "dependencies": {
     "@capacitor-community/electron": "^5.0.1",

@@ -51,7 +51,12 @@ export const useSecureChat = () => {
     }
     try {
       const all = await getAllItems();
-      const myItems = all.filter((i) => i.metadata?.owner === userEmail);
+      const myItems = all.filter(
+        (i) =>
+          i.metadata?.owner === userEmail &&
+          !i.metadata?.isVerifier &&
+          !String(i.id || "").startsWith("verifier_"),
+      );
       setItems(myItems.sort((a, b) => b.timestamp - a.timestamp));
     } catch (e) {
       console.error("Failed to load items", e);
@@ -227,7 +232,7 @@ export const useSecureChat = () => {
         return { ok: false };
       }
     },
-    [userEmail, addItemWithKey, loadItems],
+    [userEmail],
   );
 
   const addItem = useCallback(

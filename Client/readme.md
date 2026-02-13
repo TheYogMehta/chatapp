@@ -161,6 +161,6 @@ npx cap sync
 
 ---
 
-### Note:
+### Note
 
 - This will only generate for android for electron we need to replace in /electron/assets/
